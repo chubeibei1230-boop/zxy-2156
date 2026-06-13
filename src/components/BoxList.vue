@@ -9,108 +9,119 @@
     </div>
 
     <template v-else>
-      <div v-for="group in groupedBoxes" :key="group.siteName" class="site-group" :data-site="group.siteName">
-        <div class="site-group-header">
-          <div class="site-group-title">
-            <span class="site-order">{{ group.siteOrder }}</span>
-            <span class="site-name">{{ group.siteName }}</span>
-            <span class="site-count">{{ group.boxes.length }} 箱</span>
-          </div>
-          <div class="site-group-status">
-            <span v-for="s in group.statLabels" :key="s.label" class="mini-stat" :class="s.class">{{ s.label }} {{ s.count }}</span>
-          </div>
-        </div>
+      <div class="site-sort-hint">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+        拖拽站点名称可调整路线顺序，拖拽左侧把手可调整站内顺序
+      </div>
 
-        <div class="box-table-wrap">
-          <div class="box-table-header">
-            <div class="col-check">
-              <input type="checkbox" :checked="isAllSelected(group)" @change="$emit('select-all', group.boxes.map(b => b.id))" />
-            </div>
-            <div class="col-drag"></div>
-            <div class="col-boxno">箱号</div>
-            <div class="col-summary">箱内摘要</div>
-            <div class="col-time">到达时段</div>
-            <div class="col-risk">风险</div>
-            <div class="col-responsible">责任人</div>
-            <div class="col-status">状态</div>
-            <div v-if="checkMode" class="col-checknote">核对说明</div>
-            <div class="col-actions">操作</div>
-          </div>
-
-          <div class="box-table-body" :ref="el => setupSortable(el, group)">
-            <div
-              v-for="box in group.boxes"
-              :key="box.id"
-              class="box-row"
-              :data-id="box.id"
-              :class="{
-                selected: selectedIds.has(box.id),
-                highlight: highlightIds.includes(box.id),
-                'need-check': checkMode && needCheck(box)
-              }"
-            >
-              <div class="col-check">
-                <input type="checkbox" :checked="selectedIds.has(box.id)" @change="$emit('select', box.id)" />
-              </div>
-              <div class="col-drag drag-handle">
+      <div class="site-groups" ref="siteGroupsRef">
+        <div v-for="group in groupedBoxes" :key="group.siteName" class="site-group" :data-site="group.siteName">
+          <div class="site-group-header site-drag-handle">
+            <div class="site-group-title">
+              <span class="site-drag-icon">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+              </span>
+              <span class="site-order">{{ group.siteOrder }}</span>
+              <span class="site-name">{{ group.siteName }}</span>
+              <span class="site-count">{{ group.boxes.length }} 箱</span>
+            </div>
+            <div class="site-group-status">
+              <span v-for="s in group.statLabels" :key="s.label" class="mini-stat" :class="s.class">{{ s.label }} {{ s.count }}</span>
+            </div>
+          </div>
+
+          <div class="box-table-wrap">
+            <div class="box-table-header">
+              <div class="col-check">
+                <input type="checkbox" :checked="isAllSelected(group)" @change="$emit('select-all', group.boxes.map(b => b.id))" />
               </div>
-              <div class="col-boxno">
-                <span class="boxno-label" :class="{ duplicate: isDuplicate(box) }">{{ box.boxNumber || '—' }}</span>
-              </div>
-              <div class="col-summary">{{ box.summary || '—' }}
-                <span v-if="box.remark" class="remark-tip" :title="box.remark">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-                </span>
-              </div>
-              <div class="col-time">{{ box.timeSlot || '—' }}</div>
-              <div class="col-risk">
-                <span class="tag" :class="riskClass(box.riskLevel)">{{ riskLabel(box.riskLevel) }}</span>
-              </div>
-              <div class="col-responsible">
-                <input
-                  v-if="editingField === `${box.id}-responsible`"
-                  type="text"
-                  :value="box.responsible"
-                  @blur="saveField(box.id, 'responsible', $event.target.value)"
-                  @keyup.enter="saveField(box.id, 'responsible', $event.target.value); editingField = null"
-                  @keyup.esc="editingField = null"
-                  ref="inputRefs"
-                  class="inline-input"
-                  placeholder="点击填写"
-                />
-                <span v-else class="editable" @click="startEdit(box.id, 'responsible', box.responsible)">
-                  {{ box.responsible || '<span class="empty-field">未填写</span>' }}
-                </span>
-              </div>
-              <div class="col-status">
-                <select
-                  :value="box.status"
-                  @change="$emit('update', box.id, { status: $event.target.value })"
-                  class="inline-select"
-                  :class="statusSelectClass(box.status)"
-                >
-                  <option v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
-                </select>
-              </div>
-              <div v-if="checkMode" class="col-checknote">
-                <textarea
-                  class="inline-textarea"
-                  :class="{ missing: box.status === 'arrived' && (!box.checkNote || !box.checkNote.trim()) }"
-                  :value="box.checkNote"
-                  rows="1"
-                  placeholder="核对说明..."
-                  @input="autoResizeTextarea"
-                  @blur="$emit('update', box.id, { checkNote: $event.target.value })"
-                ></textarea>
-              </div>
-              <div class="col-actions">
-                <button class="icon-btn" title="编辑" @click="$emit('edit', box)">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                </button>
-                <button class="icon-btn danger" title="删除" @click="$emit('remove', box.id)">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
-                </button>
+              <div class="col-drag"></div>
+              <div class="col-boxno">箱号</div>
+              <div class="col-summary">箱内摘要</div>
+              <div class="col-time">到达时段</div>
+              <div class="col-risk">风险</div>
+              <div class="col-responsible">责任人</div>
+              <div class="col-status">状态</div>
+              <div v-if="checkMode" class="col-checknote">核对说明</div>
+              <div class="col-actions">操作</div>
+            </div>
+
+            <div class="box-table-body" :ref="el => setupBoxSortable(el, group)">
+              <div
+                v-for="box in group.boxes"
+                :key="box.id"
+                class="box-row"
+                :data-id="box.id"
+                :class="{
+                  selected: selectedIds.has(box.id),
+                  highlight: highlightIds.includes(box.id),
+                  'need-check': checkMode && needCheck(box)
+                }"
+              >
+                <div class="col-check">
+                  <input type="checkbox" :checked="selectedIds.has(box.id)" @change="$emit('select', box.id)" />
+                </div>
+                <div class="col-drag drag-handle">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+                </div>
+                <div class="col-boxno">
+                  <span class="boxno-label" :class="{ duplicate: isDuplicate(box) }">{{ box.boxNumber || '—' }}</span>
+                </div>
+                <div class="col-summary">
+                  <span>{{ box.summary || '—' }}</span>
+                  <span v-if="box.remark" class="remark-tip" :title="box.remark">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                  </span>
+                </div>
+                <div class="col-time">{{ box.timeSlot || '—' }}</div>
+                <div class="col-risk">
+                  <span class="tag" :class="riskClass(box.riskLevel)">{{ riskLabel(box.riskLevel) }}</span>
+                </div>
+                <div class="col-responsible">
+                  <input
+                    v-if="editingField === `${box.id}-responsible`"
+                    type="text"
+                    :value="box.responsible"
+                    @blur="saveField(box.id, 'responsible', $event.target.value)"
+                    @keyup.enter="saveField(box.id, 'responsible', $event.target.value); editingField = null"
+                    @keyup.esc="editingField = null"
+                    class="inline-input"
+                    placeholder="点击填写"
+                  />
+                  <span v-else class="editable" @click="startEdit(box.id, 'responsible', box.responsible)">
+                    <span v-if="box.responsible">{{ box.responsible }}</span>
+                    <span v-else class="empty-field">未填写</span>
+                  </span>
+                </div>
+                <div class="col-status">
+                  <select
+                    :value="box.status"
+                    @change="$emit('update', box.id, { status: $event.target.value })"
+                    class="inline-select"
+                    :class="statusSelectClass(box.status)"
+                  >
+                    <option v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
+                  </select>
+                </div>
+                <div v-if="checkMode" class="col-checknote">
+                  <textarea
+                    class="inline-textarea"
+                    :class="{ missing: box.status === 'arrived' && (!box.checkNote || !box.checkNote.trim()) }"
+                    :value="box.checkNote"
+                    rows="1"
+                    placeholder="核对说明..."
+                    @input="autoResizeTextarea"
+                    @blur="$emit('update', box.id, { checkNote: $event.target.value })"
+                  ></textarea>
+                </div>
+                <div class="col-actions">
+                  <button class="icon-btn" title="编辑" @click="$emit('edit', box)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                  </button>
+                  <button class="icon-btn danger" title="删除" @click="$emit('remove', box.id)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -121,7 +132,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import Sortable from 'sortablejs'
 import { STATUS_OPTIONS, RISK_OPTIONS } from '../lib/constants.js'
 
@@ -136,14 +147,15 @@ const emit = defineEmits(['select', 'select-all', 'update', 'remove', 'edit', 'r
 
 const statusOptions = STATUS_OPTIONS
 const editingField = ref(null)
-const inputRefs = ref([])
 const listWrapRef = ref(null)
+const siteGroupsRef = ref(null)
 const sortableInstances = []
+const boxSortableMap = new Map()
 
 const duplicateBoxNumbers = computed(() => {
   const map = new Map()
   props.boxes.forEach(b => {
-    const key = b.boxNumber.trim().toUpperCase()
+    const key = (b.boxNumber || '').trim().toUpperCase()
     if (!key) return
     map.set(key, (map.get(key) || 0) + 1)
   })
@@ -154,12 +166,12 @@ const duplicateBoxNumbers = computed(() => {
 
 const groupedBoxes = computed(() => {
   const groups = new Map()
-  props.boxes.forEach((box, idx) => {
+  props.boxes.forEach((box) => {
     const site = box.siteName || '未分配站点'
     if (!groups.has(site)) {
       groups.set(site, {
         siteName: site,
-        siteOrder: box.siteOrder || (idx + 1),
+        siteOrder: box.siteOrder || 0,
         boxes: []
       })
     }
@@ -168,6 +180,7 @@ const groupedBoxes = computed(() => {
   return [...groups.values()]
     .sort((a, b) => a.siteOrder - b.siteOrder)
     .map(g => {
+      g.boxes.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0))
       const pending = g.boxes.filter(b => b.status === 'pending').length
       const transit = g.boxes.filter(b => b.status === 'transit').length
       const arrived = g.boxes.filter(b => b.status === 'arrived').length
@@ -186,7 +199,7 @@ function isAllSelected(group) {
 }
 
 function isDuplicate(box) {
-  const key = box.boxNumber.trim().toUpperCase()
+  const key = (box.boxNumber || '').trim().toUpperCase()
   return duplicateBoxNumbers.value.has(key)
 }
 
@@ -216,17 +229,17 @@ function statusSelectClass(status) {
 function startEdit(id, field, current) {
   editingField.value = `${id}-${field}`
   nextTick(() => {
-    const inputs = document.querySelectorAll('.inline-input')
-    const last = inputs[inputs.length - 1]
-    if (last) {
-      last.focus()
-      last.select()
+    const selector = `.box-row[data-id="${id}"] .inline-input`
+    const input = document.querySelector(selector)
+    if (input) {
+      input.focus()
+      input.select()
     }
   })
 }
 
 function saveField(id, field, value) {
-  emit('update', id, { [field]: value.trim() })
+  emit('update', id, { [field]: (value || '').trim() })
   editingField.value = null
 }
 
@@ -236,10 +249,10 @@ function autoResizeTextarea(e) {
   el.style.height = Math.min(el.scrollHeight, 120) + 'px'
 }
 
-function setupSortable(el, group) {
+function setupBoxSortable(el, group) {
   if (!el) return
-  const existing = sortableInstances.find(s => s.el === el)
-  if (existing) return
+  if (boxSortableMap.has(group.siteName)) return
+
   const instance = Sortable.create(el, {
     animation: 180,
     handle: '.drag-handle',
@@ -247,29 +260,65 @@ function setupSortable(el, group) {
     ghostClass: 'drag-ghost',
     chosenClass: 'drag-chosen',
     dragClass: 'drag-dragging',
-    onEnd: () => {
+    onEnd: (evt) => {
+      if (evt.oldIndex === evt.newIndex) return
+
       const rows = el.querySelectorAll('.box-row')
       const newOrder = []
-      rows.forEach((row, idx) => {
+      rows.forEach((row) => {
         const id = parseInt(row.dataset.id)
         const box = group.boxes.find(b => b.id === id)
         if (box) {
           newOrder.push({ ...box })
         }
       })
+
       const updatedBoxes = [...props.boxes]
-      const groupStartOrder = group.boxes.length > 0
-        ? Math.min(...group.boxes.map(b => b.orderIndex || 0))
+      const siteBoxes = updatedBoxes.filter(b => b.siteName === group.siteName)
+      const baseOrder = siteBoxes.length > 0
+        ? Math.min(...siteBoxes.map(b => b.orderIndex || 0))
         : 0
+
       newOrder.forEach((box, idx) => {
-        box.orderIndex = groupStartOrder + idx
+        box.orderIndex = baseOrder + idx
         const globalIdx = updatedBoxes.findIndex(b => b.id === box.id)
         if (globalIdx > -1) updatedBoxes[globalIdx] = box
       })
-      emit('reorder', updatedBoxes)
+
+      emit('reorder', updatedBoxes, 'box')
     }
   })
-  instance.el = el
+  boxSortableMap.set(group.siteName, instance)
+  sortableInstances.push(instance)
+}
+
+function setupSiteSortable() {
+  if (!siteGroupsRef.value) return
+
+  const existing = sortableInstances.find(s => s.isSite)
+  if (existing) return
+
+  const instance = Sortable.create(siteGroupsRef.value, {
+    animation: 220,
+    handle: '.site-drag-handle',
+    draggable: '.site-group',
+    ghostClass: 'site-drag-ghost',
+    chosenClass: 'site-drag-chosen',
+    dragClass: 'site-drag-dragging',
+    onEnd: (evt) => {
+      if (evt.oldIndex === evt.newIndex) return
+
+      const siteEls = siteGroupsRef.value.querySelectorAll('.site-group')
+      const newSiteOrder = []
+      siteEls.forEach(el => {
+        const siteName = el.dataset.site
+        if (siteName) newSiteOrder.push(siteName)
+      })
+
+      emit('reorder', newSiteOrder, 'site')
+    }
+  })
+  instance.isSite = true
   sortableInstances.push(instance)
 }
 
@@ -282,9 +331,16 @@ function scrollTo(id) {
   })
 }
 
+onMounted(() => {
+  nextTick(() => {
+    setupSiteSortable()
+  })
+})
+
 onBeforeUnmount(() => {
   sortableInstances.forEach(s => s.destroy())
   sortableInstances.length = 0
+  boxSortableMap.clear()
 })
 
 defineExpose({ scrollTo })
@@ -318,6 +374,21 @@ defineExpose({ scrollTo })
   font-size: 12px;
 }
 
+.site-sort-hint {
+  padding: 8px 20px;
+  font-size: 11px;
+  color: #9ca3af;
+  background: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.site-groups {
+  display: block;
+}
+
 .site-group + .site-group {
   border-top: 4px solid var(--color-bg);
 }
@@ -329,12 +400,33 @@ defineExpose({ scrollTo })
   align-items: center;
   background: linear-gradient(90deg, #fafafa, #fff);
   border-bottom: 1px solid #f3f4f6;
+  cursor: grab;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.site-group-header:hover {
+  background: linear-gradient(90deg, #eff6ff, #fff);
+}
+
+.site-group-header:active {
+  cursor: grabbing;
 }
 
 .site-group-title {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.site-drag-icon {
+  color: #d1d5db;
+  display: flex;
+  align-items: center;
+}
+
+.site-group-header:hover .site-drag-icon {
+  color: var(--color-primary);
 }
 
 .site-order {
@@ -604,9 +696,26 @@ defineExpose({ scrollTo })
   background: #fff;
 }
 
-/* Responsive columns for check mode toggle */
-.box-list-wrap:not(:has(.col-checknote)) .box-table-header,
-.box-list-wrap:not(:has(.col-checknote)) .box-row {
-  grid-template-columns: 40px 36px 120px 1fr 100px 72px 110px 110px 80px;
+.site-drag-ghost {
+  opacity: 0.5;
+  background: #eff6ff !important;
+  border: 2px dashed #93c5fd;
+}
+
+.site-drag-chosen {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  z-index: 10;
+}
+
+.site-drag-dragging {
+  background: #fff;
+}
+
+@media (max-width: 1024px) {
+  .box-table-header,
+  .box-row {
+    grid-template-columns: 40px 36px 100px 1fr 80px 60px 90px 90px 60px;
+  }
 }
 </style>

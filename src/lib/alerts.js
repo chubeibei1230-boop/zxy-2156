@@ -5,14 +5,15 @@ export function checkAlerts(boxes) {
 
   const byBoxNumber = new Map()
   boxes.forEach(box => {
-    const key = box.boxNumber.trim().toUpperCase()
+    const key = (box.boxNumber || '').trim().toUpperCase()
+    if (!key) return
     if (!byBoxNumber.has(key)) {
       byBoxNumber.set(key, [])
     }
     byBoxNumber.get(key).push(box)
   })
   byBoxNumber.forEach((group) => {
-    if (group.length > 1 && group[0].boxNumber.trim()) {
+    if (group.length > 1) {
       alerts.push({
         type: 'duplicate-box',
         level: 'danger',
@@ -26,6 +27,7 @@ export function checkAlerts(boxes) {
   const sitesWithBoxes = new Map()
   boxes.forEach(box => {
     const site = box.siteName
+    if (!site) return
     if (!sitesWithBoxes.has(site)) {
       sitesWithBoxes.set(site, [])
     }
@@ -69,37 +71,48 @@ export function checkAlerts(boxes) {
     }
   })
 
-  const sortedSites = [...sitesWithBoxes.keys()].filter(s => s && s.trim()).sort((a, b) => {
-    const aBoxes = sitesWithBoxes.get(a)[0]
-    const bBoxes = sitesWithBoxes.get(b)[0]
-    return (aBoxes?.orderIndex || 0) - (bBoxes?.orderIndex || 0)
-  })
+  sitesWithBoxes.forEach((siteBoxes, siteName) => {
+    const orderIndices = siteBoxes
+      .map(b => b.orderIndex)
+      .filter(v => typeof v === 'number' && v > 0)
+      .sort((a, b) => a - b)
 
-  const siteOrder = new Map()
-  sortedSites.forEach((site, idx) => {
-    siteOrder.set(site, idx + 1)
-  })
+    if (orderIndices.length <= 1) return
 
-  const foundOrders = new Set()
-  boxes.forEach(box => {
-    const order = siteOrder.get(box.siteName)
-    if (order) foundOrders.add(order)
-  })
-
-  if (foundOrders.size > 1) {
-    const maxOrder = Math.max(...foundOrders)
-    for (let i = 1; i <= maxOrder; i++) {
-      if (!foundOrders.has(i)) {
-        alerts.push({
-          type: 'site-gap',
-          level: 'info',
-          title: '站点顺序断档',
-          message: `第 ${i} 站未发现任何物料箱`,
-          recordIds: []
-        })
+    const gaps = []
+    for (let i = 1; i < orderIndices.length; i++) {
+      const prev = orderIndices[i - 1]
+      const curr = orderIndices[i]
+      if (curr - prev > 1) {
+        for (let g = prev + 1; g < curr; g++) {
+          gaps.push(g)
+        }
       }
     }
-  }
+
+    if (gaps.length > 0) {
+      const gapStr = gaps.length <= 3
+        ? gaps.join('、')
+        : `${gaps.slice(0, 3).join('、')} 等 ${gaps.length} 个`
+      alerts.push({
+        type: 'site-order-gap',
+        level: 'info',
+        title: '站点到达顺序断档',
+        message: `「${siteName}」的到达顺序缺号：${gapStr}`,
+        recordIds: siteBoxes.map(b => b.id)
+      })
+    }
+  })
+
+  const sortedSites = [...sitesWithBoxes.keys()]
+    .filter(s => s && s.trim())
+    .sort((a, b) => {
+      const aMin = Math.min(...sitesWithBoxes.get(a).map(x => x.orderIndex || 9999))
+      const bMin = Math.min(...sitesWithBoxes.get(b).map(x => x.orderIndex || 9999))
+      return aMin - bMin
+    })
+
+  const siteNumbers = sortedSites.map((_, idx) => idx + 1)
 
   return alerts
 }

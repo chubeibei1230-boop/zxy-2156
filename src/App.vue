@@ -94,7 +94,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { BoxDB, SiteDB } from './lib/db.js'
 import { checkAlerts } from './lib/alerts.js'
 import { seedDemoData } from './lib/seed.js'
@@ -114,7 +114,7 @@ const checkMode = ref(false)
 const checkSite = ref('')
 const boxListRef = ref(null)
 
-const filters = reactive({
+const filters = ref({
   siteName: '',
   responsible: '',
   status: '',
@@ -148,10 +148,10 @@ const displayedBoxes = computed(() => {
   if (checkMode.value && checkSite.value) {
     list = list.filter(b => b.siteName === checkSite.value)
   } else {
-    if (filters.siteName) list = list.filter(b => b.siteName === filters.siteName)
-    if (filters.responsible) list = list.filter(b => b.responsible === filters.responsible)
-    if (filters.status) list = list.filter(b => b.status === filters.status)
-    if (filters.riskLevel) list = list.filter(b => b.riskLevel === filters.riskLevel)
+    if (filters.value.siteName) list = list.filter(b => b.siteName === filters.value.siteName)
+    if (filters.value.responsible) list = list.filter(b => b.responsible === filters.value.responsible)
+    if (filters.value.status) list = list.filter(b => b.status === filters.value.status)
+    if (filters.value.riskLevel) list = list.filter(b => b.riskLevel === filters.value.riskLevel)
   }
 
   list.sort((a, b) => {
@@ -242,7 +242,7 @@ function openAddForm() {
   formMode.value = 'add'
   formData.value = {
     boxNumber: '',
-    siteName: filters.siteName || checkSite.value || (siteList.value[0] ?? ''),
+    siteName: filters.value.siteName || checkSite.value || (siteList.value[0] ?? ''),
     orderIndex: maxOrderIndex.value + 1,
     summary: '',
     timeSlot: '',
@@ -263,13 +263,13 @@ function openEditForm(box) {
 
 async function handleFormSubmit(data, mode) {
   if (mode === 'add') {
-    const id = await BoxDB.add(data)
-    boxes.value.push({ ...data, id, createdAt: Date.now(), updatedAt: Date.now() })
+    const newBox = await BoxDB.add(data)
+    boxes.value.push(newBox)
   } else {
-    await BoxDB.update(data.id, data)
+    const updated = await BoxDB.update(data.id, data)
     const idx = boxes.value.findIndex(b => b.id === data.id)
     if (idx > -1) {
-      boxes.value[idx] = { ...boxes.value[idx], ...data, updatedAt: Date.now() }
+      boxes.value[idx] = updated
     }
   }
   assignSiteOrder()
@@ -279,11 +279,11 @@ async function handleFormSubmit(data, mode) {
 async function handleBatchUpdate(status) {
   const ids = [...selectedIds.value]
   if (ids.length === 0) return
-  await BoxDB.bulkUpdate(ids, { status })
-  ids.forEach(id => {
-    const idx = boxes.value.findIndex(b => b.id === id)
+  const updatedList = await BoxDB.bulkUpdate(ids, { status })
+  updatedList.forEach(updated => {
+    const idx = boxes.value.findIndex(b => b.id === updated.id)
     if (idx > -1) {
-      boxes.value[idx] = { ...boxes.value[idx], status, updatedAt: Date.now() }
+      boxes.value[idx] = updated
     }
   })
 }
@@ -294,7 +294,7 @@ async function handleCopyLastSite() {
     alert('暂无站点，无法复制')
     return
   }
-  const targetSite = filters.siteName || checkSite.value || sites[sites.length - 1]
+  const targetSite = filters.value.siteName || checkSite.value || sites[sites.length - 1]
   const targetIdx = sites.indexOf(targetSite)
   if (targetIdx <= 0) {
     alert('当前站点是第一站，无上一站可复制')
@@ -321,37 +321,71 @@ async function handleCopyLastSite() {
     checkNote: '',
     remark: b.remark || ''
   }))
-  await BoxDB.bulkAdd(copies)
-  await loadAll()
+  const newBoxes = await BoxDB.bulkAdd(copies)
+  boxes.value = [...boxes.value, ...newBoxes]
+  assignSiteOrder()
 }
 
-async function handleReorder(newBoxes) {
-  let idx = 0
-  for (const site of siteList.value) {
-    const siteBoxes = newBoxes.filter(b => b.siteName === site)
-    for (const box of siteBoxes) {
-      idx += 1
-      await BoxDB.update(box.id, { orderIndex: idx })
+async function handleReorder(newBoxes, reorderType) {
+  if (reorderType === 'site') {
+    // 站点级排序：重新计算每个站点的起始 orderIndex
+    const siteOrderMap = new Map()
+    newBoxes.forEach((siteName, idx) => {
+      siteOrderMap.set(siteName, idx + 1)
+    })
+    // 重新分配所有箱子的 orderIndex
+    const sortedSites = newBoxes
+    let globalOrder = 0
+    const updates = []
+    for (const siteName of sortedSites) {
+      const siteBoxes = boxes.value
+        .filter(b => b.siteName === siteName)
+        .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0))
+      for (const box of siteBoxes) {
+        globalOrder += 1
+        updates.push({ id: box.id, orderIndex: globalOrder })
+      }
     }
+    for (const u of updates) {
+      await BoxDB.update(u.id, { orderIndex: u.orderIndex })
+    }
+    await loadAll()
+  } else {
+    // 箱子级排序（站点内）
+    let globalOrder = 0
+    const siteNames = [...siteList.value]
+    for (const siteName of siteNames) {
+      const siteBoxes = newBoxes.filter(b => b.siteName === siteName)
+      if (siteBoxes.length === 0) continue
+      for (const box of siteBoxes) {
+        globalOrder += 1
+        await BoxDB.update(box.id, { orderIndex: globalOrder })
+      }
+    }
+    await loadAll()
   }
-  await loadAll()
 }
 
 function handleSelectSite(site) {
   if (checkMode.value) {
     checkSite.value = site
   } else {
-    filters.siteName = filters.siteName === site ? '' : site
+    filters.value = {
+      ...filters.value,
+      siteName: filters.value.siteName === site ? '' : site
+    }
   }
 }
 
 function handleLocateRecord(alert) {
   if (alert.recordIds && alert.recordIds.length > 0) {
     const id = alert.recordIds[0]
-    filters.siteName = ''
-    filters.responsible = ''
-    filters.status = ''
-    filters.riskLevel = ''
+    filters.value = {
+      siteName: '',
+      responsible: '',
+      status: '',
+      riskLevel: ''
+    }
     checkMode.value = false
     highlightIds.value = alert.recordIds
     nextTick(() => {

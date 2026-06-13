@@ -1,5 +1,5 @@
 const DB_NAME = 'ExhibitionMaterialDB'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE_BOXES = 'boxes'
 const STORE_SITES = 'sites'
 
@@ -34,6 +34,12 @@ function openDB() {
         boxStore.createIndex('responsible', 'responsible', { unique: false })
         boxStore.createIndex('riskLevel', 'riskLevel', { unique: false })
         boxStore.createIndex('orderIndex', 'orderIndex', { unique: false })
+      } else {
+        const txn = event.target.transaction
+        const boxStore = txn.objectStore(STORE_BOXES)
+        if (!boxStore.indexNames.contains('orderIndex')) {
+          boxStore.createIndex('orderIndex', 'orderIndex', { unique: false })
+        }
       }
 
       if (!db.objectStoreNames.contains(STORE_SITES)) {
@@ -42,145 +48,186 @@ function openDB() {
           autoIncrement: true
         })
         siteStore.createIndex('orderIndex', 'orderIndex', { unique: false })
+        siteStore.createIndex('name', 'name', { unique: true })
       }
     }
   })
 }
 
-function withTx(storeName, mode, callback) {
-  return new Promise(async (resolve, reject) => {
-    const db = await openDB()
-    const tx = db.transaction(storeName, mode)
-    const store = tx.objectStore(storeName)
-    const result = callback(store, tx)
-
-    tx.oncomplete = () => resolve(result instanceof IDBRequest ? result.result : result)
-    tx.onerror = () => reject(tx.error)
-    tx.onabort = () => reject(tx.error)
+function promisifyReq(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
   })
 }
 
 export const BoxDB = {
   async getAll() {
-    return withTx(STORE_BOXES, 'readonly', (store) => {
-      const req = store.getAll()
-      req.onsuccess = () => req.result
-      return new Promise(res => { req.onsuccess = () => res(req.result) })
-    })
+    const db = await openDB()
+    const tx = db.transaction(STORE_BOXES, 'readonly')
+    const store = tx.objectStore(STORE_BOXES)
+    return promisifyReq(store.getAll())
   },
 
   async add(box) {
+    const db = await openDB()
+    const tx = db.transaction(STORE_BOXES, 'readwrite')
+    const store = tx.objectStore(STORE_BOXES)
     const timestamp = Date.now()
     const data = { ...box, createdAt: timestamp, updatedAt: timestamp }
-    return withTx(STORE_BOXES, 'readwrite', (store) => {
-      const req = store.add(data)
-      return new Promise(res => { req.onsuccess = () => res(req.result) })
-    })
+    const id = await promisifyReq(store.add(data))
+    return { ...data, id }
   },
 
   async bulkAdd(boxes) {
-    const timestamp = Date.now()
-    const results = []
-    await withTx(STORE_BOXES, 'readwrite', (store) => {
-      boxes.forEach(box => {
+    const db = await openDB()
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_BOXES, 'readwrite')
+      const store = tx.objectStore(STORE_BOXES)
+      const timestamp = Date.now()
+      const results = []
+      let completed = 0
+      let hasError = false
+
+      boxes.forEach((box, index) => {
+        if (hasError) return
         const data = { ...box, createdAt: timestamp, updatedAt: timestamp }
         const req = store.add(data)
-        req.onsuccess = () => results.push(req.result)
+        req.onsuccess = () => {
+          if (hasError) return
+          results.push({ ...data, id: req.result })
+          completed++
+          if (completed === boxes.length) {
+            resolve(results)
+          }
+        }
+        req.onerror = () => {
+          hasError = true
+          reject(req.error)
+        }
       })
-      return new Promise(res => setTimeout(res, 0))
+
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
     })
-    return results
   },
 
   async update(id, updates) {
-    return withTx(STORE_BOXES, 'readwrite', (store) => {
-      const getReq = store.get(id)
-      return new Promise((res, rej) => {
-        getReq.onsuccess = () => {
-          const existing = getReq.result
-          if (!existing) { rej(new Error('Record not found')); return }
-          const updated = { ...existing, ...updates, updatedAt: Date.now() }
-          const putReq = store.put(updated)
-          putReq.onsuccess = () => res(updated)
-        }
-      })
-    })
+    const db = await openDB()
+    const tx = db.transaction(STORE_BOXES, 'readwrite')
+    const store = tx.objectStore(STORE_BOXES)
+    const existing = await promisifyReq(store.get(id))
+    if (!existing) throw new Error('Record not found')
+    const updated = { ...existing, ...updates, updatedAt: Date.now() }
+    await promisifyReq(store.put(updated))
+    return updated
   },
 
   async bulkUpdate(ids, updates) {
-    const updatedAt = Date.now()
-    await withTx(STORE_BOXES, 'readwrite', (store) => {
+    const db = await openDB()
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_BOXES, 'readwrite')
+      const store = tx.objectStore(STORE_BOXES)
+      const updatedAt = Date.now()
+      const results = []
+      let pending = ids.length
+      let hasError = false
+
+      if (pending === 0) {
+        resolve([])
+        return
+      }
+
       ids.forEach(id => {
+        if (hasError) return
         const getReq = store.get(id)
         getReq.onsuccess = () => {
+          if (hasError) return
           const existing = getReq.result
           if (existing) {
-            store.put({ ...existing, ...updates, updatedAt })
+            const updated = { ...existing, ...updates, updatedAt }
+            const putReq = store.put(updated)
+            putReq.onsuccess = () => {
+              if (hasError) return
+              results.push(updated)
+              pending--
+              if (pending === 0) resolve(results)
+            }
+            putReq.onerror = () => {
+              hasError = true
+              reject(putReq.error)
+            }
+          } else {
+            pending--
+            if (pending === 0) resolve(results)
           }
         }
+        getReq.onerror = () => {
+          hasError = true
+          reject(getReq.error)
+        }
       })
-      return new Promise(res => setTimeout(res, 0))
+
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
     })
   },
 
   async remove(id) {
-    return withTx(STORE_BOXES, 'readwrite', (store) => {
-      const req = store.delete(id)
-      return new Promise(res => { req.onsuccess = () => res() })
-    })
+    const db = await openDB()
+    const tx = db.transaction(STORE_BOXES, 'readwrite')
+    const store = tx.objectStore(STORE_BOXES)
+    await promisifyReq(store.delete(id))
   },
 
   async clear() {
-    return withTx(STORE_BOXES, 'readwrite', (store) => {
-      const req = store.clear()
-      return new Promise(res => { req.onsuccess = () => res() })
-    })
+    const db = await openDB()
+    const tx = db.transaction(STORE_BOXES, 'readwrite')
+    const store = tx.objectStore(STORE_BOXES)
+    await promisifyReq(store.clear())
   }
 }
 
 export const SiteDB = {
   async getAll() {
-    return withTx(STORE_SITES, 'readonly', (store) => {
-      const req = store.getAll()
-      return new Promise(res => { req.onsuccess = () => res(req.result) })
-    })
+    const db = await openDB()
+    const tx = db.transaction(STORE_SITES, 'readonly')
+    const store = tx.objectStore(STORE_SITES)
+    return promisifyReq(store.getAll())
   },
 
   async add(site) {
+    const db = await openDB()
+    const tx = db.transaction(STORE_SITES, 'readwrite')
+    const store = tx.objectStore(STORE_SITES)
     const timestamp = Date.now()
     const data = { ...site, createdAt: timestamp, updatedAt: timestamp }
-    return withTx(STORE_SITES, 'readwrite', (store) => {
-      const req = store.add(data)
-      return new Promise(res => { req.onsuccess = () => res(req.result) })
-    })
+    const id = await promisifyReq(store.add(data))
+    return { ...data, id }
   },
 
   async update(id, updates) {
-    return withTx(STORE_SITES, 'readwrite', (store) => {
-      const getReq = store.get(id)
-      return new Promise((res, rej) => {
-        getReq.onsuccess = () => {
-          const existing = getReq.result
-          if (!existing) { rej(new Error('Record not found')); return }
-          const updated = { ...existing, ...updates, updatedAt: Date.now() }
-          const putReq = store.put(updated)
-          putReq.onsuccess = () => res(updated)
-        }
-      })
-    })
+    const db = await openDB()
+    const tx = db.transaction(STORE_SITES, 'readwrite')
+    const store = tx.objectStore(STORE_SITES)
+    const existing = await promisifyReq(store.get(id))
+    if (!existing) throw new Error('Record not found')
+    const updated = { ...existing, ...updates, updatedAt: Date.now() }
+    await promisifyReq(store.put(updated))
+    return updated
   },
 
   async remove(id) {
-    return withTx(STORE_SITES, 'readwrite', (store) => {
-      const req = store.delete(id)
-      return new Promise(res => { req.onsuccess = () => res() })
-    })
+    const db = await openDB()
+    const tx = db.transaction(STORE_SITES, 'readwrite')
+    const store = tx.objectStore(STORE_SITES)
+    await promisifyReq(store.delete(id))
   },
 
   async clear() {
-    return withTx(STORE_SITES, 'readwrite', (store) => {
-      const req = store.clear()
-      return new Promise(res => { req.onsuccess = () => res() })
-    })
+    const db = await openDB()
+    const tx = db.transaction(STORE_SITES, 'readwrite')
+    const store = tx.objectStore(STORE_SITES)
+    await promisifyReq(store.clear())
   }
 }
