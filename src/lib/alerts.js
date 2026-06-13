@@ -71,22 +71,22 @@ export function checkAlerts(boxes) {
     }
   })
 
-  sitesWithBoxes.forEach((siteBoxes, siteName) => {
-    const orderIndices = siteBoxes
-      .map(b => b.orderIndex)
-      .filter(v => typeof v === 'number' && v > 0)
-      .sort((a, b) => a - b)
+  const orderedBoxes = boxes
+    .filter(b => typeof b.orderIndex === 'number' && b.orderIndex > 0)
+    .sort((a, b) => a.orderIndex - b.orderIndex)
 
-    if (orderIndices.length <= 1) return
-
+  if (orderedBoxes.length > 1) {
     const gaps = []
-    for (let i = 1; i < orderIndices.length; i++) {
-      const prev = orderIndices[i - 1]
-      const curr = orderIndices[i]
-      if (curr - prev > 1) {
-        for (let g = prev + 1; g < curr; g++) {
+    const relatedIds = new Set()
+    for (let i = 1; i < orderedBoxes.length; i++) {
+      const prev = orderedBoxes[i - 1]
+      const curr = orderedBoxes[i]
+      if (curr.orderIndex - prev.orderIndex > 1) {
+        for (let g = prev.orderIndex + 1; g < curr.orderIndex; g++) {
           gaps.push(g)
         }
+        relatedIds.add(prev.id)
+        relatedIds.add(curr.id)
       }
     }
 
@@ -97,22 +97,12 @@ export function checkAlerts(boxes) {
       alerts.push({
         type: 'site-order-gap',
         level: 'info',
-        title: '站点到达顺序断档',
-        message: `「${siteName}」的到达顺序缺号：${gapStr}`,
-        recordIds: siteBoxes.map(b => b.id)
+        title: '站点顺序断档',
+        message: `到达顺序缺号：${gapStr}`,
+        recordIds: [...relatedIds]
       })
     }
-  })
-
-  const sortedSites = [...sitesWithBoxes.keys()]
-    .filter(s => s && s.trim())
-    .sort((a, b) => {
-      const aMin = Math.min(...sitesWithBoxes.get(a).map(x => x.orderIndex || 9999))
-      const bMin = Math.min(...sitesWithBoxes.get(b).map(x => x.orderIndex || 9999))
-      return aMin - bMin
-    })
-
-  const siteNumbers = sortedSites.map((_, idx) => idx + 1)
+  }
 
   return alerts
 }

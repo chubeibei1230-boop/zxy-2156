@@ -132,7 +132,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import Sortable from 'sortablejs'
 import { STATUS_OPTIONS, RISK_OPTIONS } from '../lib/constants.js'
 
@@ -296,7 +296,12 @@ function setupSiteSortable() {
   if (!siteGroupsRef.value) return
 
   const existing = sortableInstances.find(s => s.isSite)
-  if (existing) return
+  if (existing) {
+    if (existing.el === siteGroupsRef.value) return
+    existing.destroy()
+    const idx = sortableInstances.indexOf(existing)
+    if (idx > -1) sortableInstances.splice(idx, 1)
+  }
 
   const instance = Sortable.create(siteGroupsRef.value, {
     animation: 220,
@@ -332,6 +337,12 @@ function scrollTo(id) {
 }
 
 onMounted(() => {
+  nextTick(() => {
+    setupSiteSortable()
+  })
+})
+
+watch(() => groupedBoxes.value.length, () => {
   nextTick(() => {
     setupSiteSortable()
   })

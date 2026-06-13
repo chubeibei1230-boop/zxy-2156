@@ -110,7 +110,7 @@ function handleSubmit() {
     alert('请填写必填项：箱号和站点')
     return
   }
-  if (mode.value === 'add' && !form.value.orderIndex) {
+  if (props.mode === 'add' && !form.value.orderIndex) {
     form.value.orderIndex = props.maxOrder + 1
   }
   emit('submit', { ...form.value }, props.mode)
