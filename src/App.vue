@@ -1,0 +1,498 @@
+<template>
+  <div class="app-root">
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="brand">
+          <div class="brand-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="7" width="20" height="14" rx="2" />
+              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+            </svg>
+          </div>
+          <div>
+            <h1 class="brand-title">巡展物料箱路线核对</h1>
+            <p class="brand-sub">Exhibition Material Route Tracker</p>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-secondary" @click="toggleCheckMode">
+            {{ checkMode ? '退出核对模式' : '进入站点核对模式' }}
+          </button>
+          <button class="btn btn-secondary" @click="loadSeedData" title="加载演示数据">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+            演示数据
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <RouteProgress
+      :boxes="boxes"
+      :active-site="checkMode ? checkSite : null"
+      @select-site="handleSelectSite"
+    />
+
+    <div class="main-content">
+      <div class="content-left" :class="{ full: !showAlertPanel }">
+        <FilterBar
+          v-model:filters="filters"
+          :boxes="boxes"
+          :selected-ids="selectedIds"
+          :check-mode="checkMode"
+          :check-site="checkSite"
+          @batch-update="handleBatchUpdate"
+          @clear-selection="clearSelection"
+          @add-box="openAddForm"
+          @copy-last="handleCopyLastSite"
+          @toggle-alert="showAlertPanel = !showAlertPanel"
+          :alert-count="alerts.length"
+        />
+
+        <SiteCheckHeader
+          v-if="checkMode"
+          :site-boxes="currentCheckBoxes"
+          :site-name="checkSite"
+        />
+
+        <BoxList
+          ref="boxListRef"
+          :boxes="displayedBoxes"
+          :selected-ids="selectedIds"
+          :check-mode="checkMode"
+          :highlight-ids="highlightIds"
+          @select="toggleSelect"
+          @select-all="toggleSelectAll"
+          @update="handleUpdateBox"
+          @remove="handleRemoveBox"
+          @edit="openEditForm"
+          @reorder="handleReorder"
+        />
+      </div>
+
+      <AlertPanel
+        v-if="showAlertPanel"
+        :alerts="alerts"
+        @locate="handleLocateRecord"
+        @close="showAlertPanel = false"
+      />
+    </div>
+
+    <BoxFormModal
+      v-if="formVisible"
+      :mode="formMode"
+      :initial-data="formData"
+      :sites="siteList"
+      :max-order="maxOrderIndex"
+      @submit="handleFormSubmit"
+      @close="formVisible = false"
+    />
+
+    <div v-if="loading" class="loading-mask">
+      <div class="loading-spinner"></div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
+import { BoxDB, SiteDB } from './lib/db.js'
+import { checkAlerts } from './lib/alerts.js'
+import { seedDemoData } from './lib/seed.js'
+import RouteProgress from './components/RouteProgress.vue'
+import FilterBar from './components/FilterBar.vue'
+import BoxList from './components/BoxList.vue'
+import AlertPanel from './components/AlertPanel.vue'
+import BoxFormModal from './components/BoxFormModal.vue'
+import SiteCheckHeader from './components/SiteCheckHeader.vue'
+
+const loading = ref(false)
+const boxes = ref([])
+const selectedIds = ref(new Set())
+const highlightIds = ref([])
+const showAlertPanel = ref(true)
+const checkMode = ref(false)
+const checkSite = ref('')
+const boxListRef = ref(null)
+
+const filters = reactive({
+  siteName: '',
+  responsible: '',
+  status: '',
+  riskLevel: ''
+})
+
+const formVisible = ref(false)
+const formMode = ref('add')
+const formData = ref(null)
+
+const alerts = computed(() => checkAlerts(boxes.value))
+
+const siteList = computed(() => {
+  const set = new Set()
+  boxes.value.forEach(b => b.siteName && set.add(b.siteName))
+  return [...set].sort((a, b) => {
+    const aBox = boxes.value.find(x => x.siteName === a)
+    const bBox = boxes.value.find(x => x.siteName === b)
+    return (aBox?.orderIndex || 0) - (bBox?.orderIndex || 0)
+  })
+})
+
+const maxOrderIndex = computed(() => {
+  if (boxes.value.length === 0) return 0
+  return Math.max(...boxes.value.map(b => b.orderIndex || 0))
+})
+
+const displayedBoxes = computed(() => {
+  let list = [...boxes.value]
+
+  if (checkMode.value && checkSite.value) {
+    list = list.filter(b => b.siteName === checkSite.value)
+  } else {
+    if (filters.siteName) list = list.filter(b => b.siteName === filters.siteName)
+    if (filters.responsible) list = list.filter(b => b.responsible === filters.responsible)
+    if (filters.status) list = list.filter(b => b.status === filters.status)
+    if (filters.riskLevel) list = list.filter(b => b.riskLevel === filters.riskLevel)
+  }
+
+  list.sort((a, b) => {
+    const sOrder = (a.siteOrder ?? 0) - (b.siteOrder ?? 0)
+    if (sOrder !== 0) return sOrder
+    return (a.orderIndex || 0) - (b.orderIndex || 0)
+  })
+
+  return list
+})
+
+const currentCheckBoxes = computed(() => {
+  if (!checkMode.value || !checkSite.value) return []
+  return boxes.value.filter(b => b.siteName === checkSite.value)
+})
+
+function assignSiteOrder() {
+  const sites = new Map()
+  const boxesBySite = new Map()
+  boxes.value.forEach(box => {
+    if (!boxesBySite.has(box.siteName)) boxesBySite.set(box.siteName, [])
+    boxesBySite.get(box.siteName).push(box)
+  })
+  const sortedSites = [...boxesBySite.entries()].sort((a, b) => {
+    return (a[1][0]?.orderIndex || 0) - (b[1][0]?.orderIndex || 0)
+  })
+  sortedSites.forEach(([site], idx) => {
+    sites.set(site, idx + 1)
+  })
+  boxes.value.forEach(box => {
+    box.siteOrder = sites.get(box.siteName) || 0
+  })
+}
+
+async function loadAll() {
+  loading.value = true
+  try {
+    boxes.value = await BoxDB.getAll()
+    assignSiteOrder()
+  } finally {
+    loading.value = false
+  }
+}
+
+function toggleSelect(id) {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
+}
+
+function toggleSelectAll(ids) {
+  const current = selectedIds.value
+  const allSelected = ids.length > 0 && ids.every(id => current.has(id))
+  const next = new Set(current)
+  if (allSelected) {
+    ids.forEach(id => next.delete(id))
+  } else {
+    ids.forEach(id => next.add(id))
+  }
+  selectedIds.value = next
+}
+
+function clearSelection() {
+  selectedIds.value = new Set()
+}
+
+async function handleUpdateBox(id, updates) {
+  await BoxDB.update(id, updates)
+  const idx = boxes.value.findIndex(b => b.id === id)
+  if (idx > -1) {
+    boxes.value[idx] = { ...boxes.value[idx], ...updates, updatedAt: Date.now() }
+    assignSiteOrder()
+  }
+}
+
+async function handleRemoveBox(id) {
+  if (!confirm('确认删除这条物料箱记录？')) return
+  await BoxDB.remove(id)
+  boxes.value = boxes.value.filter(b => b.id !== id)
+  const next = new Set(selectedIds.value)
+  next.delete(id)
+  selectedIds.value = next
+  assignSiteOrder()
+}
+
+function openAddForm() {
+  formMode.value = 'add'
+  formData.value = {
+    boxNumber: '',
+    siteName: filters.siteName || checkSite.value || (siteList.value[0] ?? ''),
+    orderIndex: maxOrderIndex.value + 1,
+    summary: '',
+    timeSlot: '',
+    riskLevel: 'low',
+    responsible: '',
+    status: 'pending',
+    checkNote: '',
+    remark: ''
+  }
+  formVisible.value = true
+}
+
+function openEditForm(box) {
+  formMode.value = 'edit'
+  formData.value = { ...box }
+  formVisible.value = true
+}
+
+async function handleFormSubmit(data, mode) {
+  if (mode === 'add') {
+    const id = await BoxDB.add(data)
+    boxes.value.push({ ...data, id, createdAt: Date.now(), updatedAt: Date.now() })
+  } else {
+    await BoxDB.update(data.id, data)
+    const idx = boxes.value.findIndex(b => b.id === data.id)
+    if (idx > -1) {
+      boxes.value[idx] = { ...boxes.value[idx], ...data, updatedAt: Date.now() }
+    }
+  }
+  assignSiteOrder()
+  formVisible.value = false
+}
+
+async function handleBatchUpdate(status) {
+  const ids = [...selectedIds.value]
+  if (ids.length === 0) return
+  await BoxDB.bulkUpdate(ids, { status })
+  ids.forEach(id => {
+    const idx = boxes.value.findIndex(b => b.id === id)
+    if (idx > -1) {
+      boxes.value[idx] = { ...boxes.value[idx], status, updatedAt: Date.now() }
+    }
+  })
+}
+
+async function handleCopyLastSite() {
+  const sites = siteList.value
+  if (sites.length < 1) {
+    alert('暂无站点，无法复制')
+    return
+  }
+  const targetSite = filters.siteName || checkSite.value || sites[sites.length - 1]
+  const targetIdx = sites.indexOf(targetSite)
+  if (targetIdx <= 0) {
+    alert('当前站点是第一站，无上一站可复制')
+    return
+  }
+  const lastSite = sites[targetIdx - 1]
+  const lastBoxes = boxes.value.filter(b => b.siteName === lastSite)
+  if (lastBoxes.length === 0) {
+    alert('上一站无物料箱可复制')
+    return
+  }
+  if (!confirm(`将「${lastSite}」的 ${lastBoxes.length} 个物料箱复制到「${targetSite}」，是否继续？`)) return
+
+  const baseOrder = maxOrderIndex.value
+  const copies = lastBoxes.map((b, i) => ({
+    boxNumber: b.boxNumber,
+    siteName: targetSite,
+    orderIndex: baseOrder + i + 1,
+    summary: b.summary,
+    timeSlot: b.timeSlot,
+    riskLevel: b.riskLevel,
+    responsible: b.responsible,
+    status: 'pending',
+    checkNote: '',
+    remark: b.remark || ''
+  }))
+  await BoxDB.bulkAdd(copies)
+  await loadAll()
+}
+
+async function handleReorder(newBoxes) {
+  let idx = 0
+  for (const site of siteList.value) {
+    const siteBoxes = newBoxes.filter(b => b.siteName === site)
+    for (const box of siteBoxes) {
+      idx += 1
+      await BoxDB.update(box.id, { orderIndex: idx })
+    }
+  }
+  await loadAll()
+}
+
+function handleSelectSite(site) {
+  if (checkMode.value) {
+    checkSite.value = site
+  } else {
+    filters.siteName = filters.siteName === site ? '' : site
+  }
+}
+
+function handleLocateRecord(alert) {
+  if (alert.recordIds && alert.recordIds.length > 0) {
+    const id = alert.recordIds[0]
+    filters.siteName = ''
+    filters.responsible = ''
+    filters.status = ''
+    filters.riskLevel = ''
+    checkMode.value = false
+    highlightIds.value = alert.recordIds
+    nextTick(() => {
+      boxListRef.value?.scrollTo(id)
+      setTimeout(() => { highlightIds.value = [] }, 3000)
+    })
+  }
+}
+
+function toggleCheckMode() {
+  if (!checkMode.value) {
+    if (siteList.value.length === 0) {
+      alert('暂无站点数据')
+      return
+    }
+    checkSite.value = siteList.value[0]
+    clearSelection()
+  }
+  checkMode.value = !checkMode.value
+}
+
+async function loadSeedData() {
+  if (!confirm('加载演示数据将清空现有数据，是否继续？')) return
+  loading.value = true
+  try {
+    await seedDemoData()
+    await loadAll()
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(async () => {
+  await loadAll()
+})
+</script>
+
+<style scoped>
+.app-root {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  background: #fff;
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.header-inner {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 14px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+}
+
+.brand-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #111827;
+  line-height: 1.2;
+}
+
+.brand-sub {
+  font-size: 11px;
+  color: #9ca3af;
+  letter-spacing: 0.3px;
+  margin-top: 2px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.main-content {
+  max-width: 1600px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 20px 24px 40px;
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 20px;
+  flex: 1;
+}
+
+.content-left {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.content-left.full {
+  grid-column: 1 / -1;
+}
+
+.loading-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e5e7eb;
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+</style>
