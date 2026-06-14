@@ -293,6 +293,7 @@ function handleSave() {
     const rec = props.existingRecord
     const record = {
       ...rec,
+      boxIds: (rec.boxIds && rec.boxIds.length ? rec.boxIds : activeBoxes.value.map(b => b.id).filter(Boolean)),
       handoverPerson: handoverData.value.handoverPerson.trim(),
       receiverPerson: handoverData.value.receiverPerson.trim(),
       handoverTime: handoverData.value.handoverTime,
@@ -313,6 +314,7 @@ function handleSave() {
     responsibleDistribution: responsibleDistribution.value,
     supplementBoxes: supplementBoxes.value.map(b => ({ boxNumber: b.boxNumber, summary: b.summary })),
     anomalyItems: anomalyItems.value,
+    boxIds: activeBoxes.value.map(b => b.id).filter(Boolean),
     boxes: activeBoxes.value.map(b => ({
       id: b.id,
       boxNumber: b.boxNumber,

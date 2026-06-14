@@ -256,7 +256,7 @@ const siteSummaries = computed(() => {
       .filter(r => r.siteName === s.siteName)
       .map(r => ({
         ...r,
-        _sortTime: (r.handoverTime && r.handoverTime.getTime ? r.handoverTime.getTime() : (typeof r.handoverTime === 'number' ? r.handoverTime : null)) || r.createdAt || 0
+        _sortTime: parseHandoverTime(r)
       }))
       .sort((a, b) => b._sortTime - a._sortTime)
     s.latestHandover = siteHandovers.length > 0 ? siteHandovers[0] : null
@@ -286,6 +286,14 @@ function formatTime(ts) {
   const d = new Date(ts)
   const pad = n => String(n).padStart(2, '0')
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function parseHandoverTime(record) {
+  if (record.handoverTime) {
+    const time = new Date(record.handoverTime).getTime()
+    if (!Number.isNaN(time)) return time
+  }
+  return record.createdAt || 0
 }
 
 function handleSelectSite(siteName) {

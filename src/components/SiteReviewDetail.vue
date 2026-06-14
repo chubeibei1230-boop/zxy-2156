@@ -381,13 +381,11 @@ const siteHandovers = computed(() => {
 
   return baseRecords
     .map(r => {
-      let sortTime = r.createdAt || 0
-      if (r.handoverTime) {
-        if (r.handoverTime.getTime) sortTime = r.handoverTime.getTime()
-        else if (typeof r.handoverTime === 'number') sortTime = r.handoverTime
-      }
+      const sortTime = parseHandoverTime(r)
 
-      const boxIds = Array.isArray(r.boxIds) ? r.boxIds : []
+      const boxIds = Array.isArray(r.boxIds)
+        ? r.boxIds
+        : (Array.isArray(r.boxes) ? r.boxes.map(b => b.id).filter(Boolean) : [])
       let liveArrived = 0, liveTransit = 0, livePending = 0, liveSupplement = 0, liveHighRisk = 0
       let liveCount = 0
       boxIds.forEach(id => {
@@ -466,6 +464,14 @@ function formatTime(ts) {
   const d = new Date(ts)
   const pad = n => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function parseHandoverTime(record) {
+  if (record.handoverTime) {
+    const time = new Date(record.handoverTime).getTime()
+    if (!Number.isNaN(time)) return time
+  }
+  return record.createdAt || 0
 }
 
 async function handleLocateBox(boxId) {
