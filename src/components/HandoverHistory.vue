@@ -33,6 +33,17 @@
             <span class="meta-item risk" v-if="record.highRiskCount > 0">{{ record.highRiskCount }} 高风险</span>
             <span class="meta-item supplement" v-if="record.supplementCount > 0">{{ record.supplementCount }} 需补</span>
           </div>
+          <div class="record-anomaly" v-if="getHandoverAnomalyInfo(record).total > 0">
+            <span v-if="getHandoverAnomalyInfo(record).open > 0" class="anomaly-status open">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/></svg>
+              {{ getHandoverAnomalyInfo(record).open }} 未闭环
+            </span>
+            <span v-if="getHandoverAnomalyInfo(record).closed > 0" class="anomaly-status closed">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              {{ getHandoverAnomalyInfo(record).closed }} 已闭环
+            </span>
+            <button class="anomaly-action-btn" @click.stop="$emit('create-anomalies', record)">处理</button>
+          </div>
           <div class="record-people" v-if="record.handoverPerson || record.receiverPerson">
             <span v-if="record.handoverPerson" class="person-tag from">{{ record.handoverPerson }}</span>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
@@ -54,12 +65,14 @@
 
 <script setup>
 import { computed } from 'vue'
+import { hasOpenAnomaliesForHandover, isAnomalyClosed } from '../lib/anomalies.js'
 
 const props = defineProps({
-  records: { type: Array, required: true }
+  records: { type: Array, required: true },
+  anomalies: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['close', 'reopen', 'delete'])
+const emit = defineEmits(['close', 'reopen', 'delete', 'create-anomalies', 'open-anomaly-list'])
 
 const sortedRecords = computed(() => {
   return [...props.records].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
@@ -76,6 +89,13 @@ function handleDelete(record) {
   if (confirm(`确认删除「${record.siteName}」的交接记录？`)) {
     emit('delete', record.id)
   }
+}
+
+function getHandoverAnomalyInfo(record) {
+  const related = props.anomalies.filter(a => a.handoverId === record.id)
+  const open = related.filter(a => !isAnomalyClosed(a)).length
+  const closed = related.filter(a => isAnomalyClosed(a)).length
+  return { total: related.length, open, closed }
 }
 </script>
 
@@ -224,6 +244,51 @@ function handleDelete(record) {
 .meta-item.arrived { color: var(--color-success); font-weight: 600; }
 .meta-item.risk { color: var(--color-danger); font-weight: 600; }
 .meta-item.supplement { color: var(--color-warning); font-weight: 600; }
+
+.record-anomaly {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.anomaly-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+
+.anomaly-status.open {
+  color: var(--color-danger);
+  background: var(--color-danger-light);
+}
+
+.anomaly-status.closed {
+  color: var(--color-success);
+  background: var(--color-success-light);
+}
+
+.anomaly-action-btn {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+  transition: all 0.15s;
+  cursor: pointer;
+  border: none;
+}
+
+.anomaly-action-btn:hover {
+  background: var(--color-primary);
+  color: #fff;
+}
 
 .record-people {
   display: flex;

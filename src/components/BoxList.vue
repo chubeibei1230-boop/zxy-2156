@@ -59,7 +59,9 @@
                 :class="{
                   selected: selectedIds.has(box.id),
                   highlight: highlightIds.includes(box.id),
-                  'need-check': checkMode && needCheck(box)
+                  'need-check': checkMode && needCheck(box),
+                  'anomaly-closed': getBoxAnomaly(box) === 'all-closed',
+                  'anomaly-open': getBoxAnomaly(box) !== 'none' && getBoxAnomaly(box) !== 'all-closed'
                 }"
               >
                 <div class="col-check">
@@ -69,7 +71,17 @@
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>
                 </div>
                 <div class="col-boxno">
-                  <span class="boxno-label" :class="{ duplicate: isDuplicate(box) }">{{ box.boxNumber || '—' }}</span>
+                  <div class="boxno-with-anomaly">
+                    <span class="boxno-label" :class="{ duplicate: isDuplicate(box) }">{{ box.boxNumber || '—' }}</span>
+                    <AnomalyBadge
+                      v-if="getBoxAnomaly(box) !== 'none'"
+                      :status="getBoxAnomaly(box)"
+                      :count="getBoxOpenAnomalyCount(box)"
+                      :title="`${getBoxOpenAnomalyCount(box)} 个未处理异常`"
+                      size="sm"
+                      @click="handleAnomalyClick(box, $event)"
+                    />
+                  </div>
                 </div>
                 <div class="col-summary">
                   <span>{{ box.summary || '—' }}</span>
@@ -139,15 +151,18 @@
 import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import Sortable from 'sortablejs'
 import { STATUS_OPTIONS, RISK_OPTIONS } from '../lib/constants.js'
+import { getBoxAnomalyStatus, filterAnomalies, isAnomalyClosed } from '../lib/anomalies.js'
+import AnomalyBadge from './AnomalyBadge.vue'
 
 const props = defineProps({
   boxes: { type: Array, required: true },
   selectedIds: { type: Set, required: true },
   checkMode: { type: Boolean, default: false },
-  highlightIds: { type: Array, default: () => [] }
+  highlightIds: { type: Array, default: () => [] },
+  anomalies: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['select', 'select-all', 'update', 'remove', 'edit', 'reorder', 'handover'])
+const emit = defineEmits(['select', 'select-all', 'update', 'remove', 'edit', 'reorder', 'handover', 'open-anomaly'])
 
 const statusOptions = STATUS_OPTIONS
 const editingField = ref(null)
@@ -205,6 +220,19 @@ function isAllSelected(group) {
 function isDuplicate(box) {
   const key = (box.boxNumber || '').trim().toUpperCase()
   return duplicateBoxNumbers.value.has(key)
+}
+
+function getBoxAnomaly(box) {
+  return getBoxAnomalyStatus(props.anomalies, box.id)
+}
+
+function getBoxOpenAnomalyCount(box) {
+  const boxAnomalies = filterAnomalies(props.anomalies, { boxId: box.id })
+  return boxAnomalies.filter(a => !isAnomalyClosed(a)).length
+}
+
+function handleAnomalyClick(box, event) {
+  emit('open-anomaly', box.id)
 }
 
 function needCheck(box) {
@@ -562,6 +590,14 @@ defineExpose({ scrollTo })
   background: #fffbeb;
 }
 
+.box-row.anomaly-closed {
+  border-left: 3px solid var(--color-success);
+}
+
+.box-row.anomaly-open {
+  border-left: 3px solid var(--color-danger);
+}
+
 @keyframes highlight-flash {
   0% { background: #fef08a; box-shadow: inset 3px 0 0 var(--color-warning); }
   100% { background: transparent; }
@@ -593,6 +629,11 @@ defineExpose({ scrollTo })
 .col-boxno {
   font-weight: 600;
   color: #1f2937;
+}
+.boxno-with-anomaly {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .boxno-label {
   font-family: 'SF Mono', Menlo, Consolas, monospace;

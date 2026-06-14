@@ -56,6 +56,9 @@
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
               点击定位 {{ alert.recordIds.length }} 条记录
             </span>
+            <span v-if="getAlertAnomalyStatus(alert) === 'none'" class="anomaly-btn" @click.stop="$emit('create-anomaly', alert)">转为异常处理</span>
+            <span v-else-if="getAlertAnomalyStatus(alert) === 'all-closed'" class="anomaly-closed">✓ 已闭环</span>
+            <span v-else-if="getAlertAnomalyStatus(alert) === 'has-open'" class="anomaly-processing">处理中</span>
           </div>
         </div>
       </div>
@@ -70,18 +73,21 @@
         <li><span class="dot warning"></span>已到达但缺核对说明</li>
         <li><span class="dot info"></span>站点顺序断档</li>
       </ul>
+      <button class="btn btn-primary btn-sm anomaly-entry-btn" @click="$emit('open-anomaly-list')">异常处理</button>
     </div>
   </aside>
 </template>
 
 <script setup>
 import { computed } from 'vue'
+import { hasOpenAnomaliesForBox, isAnomalyClosed } from '../lib/anomalies.js'
 
 const props = defineProps({
-  alerts: { type: Array, required: true }
+  alerts: { type: Array, required: true },
+  anomalies: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['close', 'locate'])
+const emit = defineEmits(['close', 'locate', 'create-anomaly', 'open-anomaly-list'])
 
 const dangerCount = computed(() => props.alerts.filter(a => a.level === 'danger').length)
 const warningCount = computed(() => props.alerts.filter(a => a.level === 'warning').length)
@@ -91,6 +97,15 @@ function handleLocate(alert) {
   if (alert.recordIds && alert.recordIds.length > 0) {
     emit('locate', alert)
   }
+}
+
+function getAlertAnomalyStatus(alert) {
+  if (!alert.recordIds || alert.recordIds.length === 0) return 'none'
+  const related = props.anomalies.filter(a => alert.recordIds.includes(a.boxId))
+  if (related.length === 0) return 'none'
+  const allClosed = related.every(a => isAnomalyClosed(a))
+  if (allClosed) return 'all-closed'
+  return 'has-open'
 }
 </script>
 
@@ -278,6 +293,50 @@ function handleLocate(alert) {
   background: rgba(255, 255, 255, 0.6);
   padding: 2px 8px;
   border-radius: 4px;
+}
+
+.anomaly-btn {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-warning);
+  background: rgba(255, 255, 255, 0.6);
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: 6px;
+}
+.anomaly-btn:hover {
+  background: rgba(217, 119, 6, 0.1);
+}
+
+.anomaly-closed {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-success);
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-left: 6px;
+}
+
+.anomaly-processing {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-warning);
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-left: 6px;
+  background: var(--color-warning-light);
+}
+
+.anomaly-entry-btn {
+  margin-top: 10px;
+  width: 100%;
 }
 
 .panel-footer {

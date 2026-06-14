@@ -22,7 +22,7 @@
               </span>
               <span v-else>{{ idx + 1 }}</span>
             </div>
-            <span v-if="site.alertCount > 0" class="alert-badge">{{ site.alertCount > 9 ? '9+' : site.alertCount }}</span>
+            <span v-if="site.anomalyOpen > 0" class="alert-badge">{{ site.anomalyOpen > 9 ? '9+' : site.anomalyOpen }}</span>
           </div>
           <div class="site-info">
             <div class="site-name">{{ site.name }}</div>
@@ -33,10 +33,23 @@
               </span>
               <span class="meta-status">{{ getLabel(site) }}</span>
             </div>
-            <button class="site-handover-btn" @click.stop="$emit('handover', site.name)" title="生成交接单">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-              交接
-            </button>
+            <div class="site-anomaly-status" v-if="site.anomalyOpen > 0 || site.anomalyClosed > 0">
+              <span v-if="site.anomalyOpen > 0" class="sas-open">{{ site.anomalyOpen }} 未闭环</span>
+              <span v-else-if="site.anomalyClosed > 0" class="sas-closed">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                已闭环
+              </span>
+            </div>
+            <div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap;">
+              <button class="site-handover-btn" @click.stop="$emit('handover', site.name)" title="生成交接单">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                交接
+              </button>
+              <button v-if="site.anomalyOpen > 0" class="site-anomaly-btn" @click.stop="$emit('create-anomalies', site.name)" title="处理异常">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+                异常
+              </button>
+            </div>
           </div>
           <div v-if="idx < siteStats.length - 1" class="connector">
             <div class="connector-fill" :class="{ done: getStatus(site) === 'done' && (getStatus(siteStats[idx + 1]) === 'done') }"></div>
@@ -49,13 +62,15 @@
 
 <script setup>
 import { computed } from 'vue'
+import { isAnomalyClosed } from '../lib/anomalies.js'
 
 const props = defineProps({
   boxes: { type: Array, required: true },
-  activeSite: { type: String, default: null }
+  activeSite: { type: String, default: null },
+  anomalies: { type: Array, default: () => [] }
 })
 
-defineEmits(['select-site', 'handover'])
+defineEmits(['select-site', 'handover', 'create-anomalies', 'open-anomaly-list'])
 
 const siteStats = computed(() => {
   const map = new Map()
@@ -71,6 +86,9 @@ const siteStats = computed(() => {
         pending: 0,
         supplement: 0,
         alertCount: 0,
+        anomalyOpen: 0,
+        anomalyClosed: 0,
+        anomalyAllClosed: false,
         orderIndex: box.orderIndex || 9999
       })
     }
@@ -84,6 +102,20 @@ const siteStats = computed(() => {
     if (box.riskLevel === 'high' || (box.status === 'arrived' && (!box.checkNote || !box.checkNote.trim())) || !box.responsible) {
       s.alertCount += 1
     }
+  })
+  const siteAnomalies = new Map()
+  props.anomalies.forEach(a => {
+    if (!a.siteName) return
+    if (!siteAnomalies.has(a.siteName)) {
+      siteAnomalies.set(a.siteName, [])
+    }
+    siteAnomalies.get(a.siteName).push(a)
+  })
+  map.forEach((s, siteName) => {
+    const anomalies = siteAnomalies.get(siteName) || []
+    s.anomalyOpen = anomalies.filter(a => !isAnomalyClosed(a)).length
+    s.anomalyClosed = anomalies.filter(a => isAnomalyClosed(a)).length
+    s.anomalyAllClosed = anomalies.length > 0 && s.anomalyOpen === 0
   })
   return [...map.values()].sort((a, b) => a.orderIndex - b.orderIndex)
 })
@@ -281,6 +313,57 @@ function isActive(siteName) {
 
 .site-handover-btn:hover {
   background: var(--color-primary);
+  color: #fff;
+}
+
+.site-anomaly-status {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.sas-open {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--color-danger);
+  background: var(--color-danger-light);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.sas-closed {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--color-success);
+  background: var(--color-success-light);
+  padding: 1px 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.site-anomaly-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+.site-anomaly-btn:hover {
+  background: var(--color-danger);
   color: #fff;
 }
 

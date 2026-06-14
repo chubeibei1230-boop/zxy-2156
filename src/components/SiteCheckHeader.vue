@@ -30,9 +30,9 @@
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/></svg>
         </div>
         <div class="stat-body">
-          <div class="stat-label">异常数</div>
-          <div class="stat-value large" :class="{ 'has-anomaly': anomalyCount > 0 }">{{ anomalyCount }}</div>
-          <div class="stat-desc">{{ anomalyCount > 0 ? '请立即处理' : '暂无异常' }}</div>
+          <div class="stat-label">异常(闭环)</div>
+          <div class="stat-value large" :class="{ 'has-anomaly': anomalyOpenCount > 0 }">{{ anomalyOpenCount }}</div>
+          <div class="stat-desc">{{ anomalyClosedCount }} 已闭环 / {{ anomalyOpenCount }} 未闭环</div>
         </div>
       </div>
 
@@ -58,19 +58,25 @@
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         生成交接单
       </button>
+      <button v-if="anomalyOpenCount > 0" class="bd-anomaly-btn" @click="$emit('create-anomalies')">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/></svg>
+        处理异常 ({{ anomalyOpenCount }})
+      </button>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed } from 'vue'
+import { isAnomalyClosed, hasOpenAnomaliesForSite } from '../lib/anomalies.js'
 
 const props = defineProps({
   siteBoxes: { type: Array, required: true },
-  siteName: { type: String, required: true }
+  siteName: { type: String, required: true },
+  anomalies: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['handover'])
+const emit = defineEmits(['handover', 'create-anomalies'])
 
 const arrivedCount = computed(() => props.siteBoxes.filter(b => b.status === 'arrived').length)
 const transitCount = computed(() => props.siteBoxes.filter(b => b.status === 'transit').length)
@@ -88,14 +94,14 @@ const completionPercent = computed(() => {
   return Math.round((done / total) * 100)
 })
 
-const anomalyCount = computed(() => {
-  return props.siteBoxes.filter(b => {
-    if (b.riskLevel === 'high') return true
-    if (b.status === 'supplement') return true
-    if (b.status === 'arrived' && (!b.checkNote || !b.checkNote.trim())) return true
-    if (!b.responsible || !b.responsible.trim()) return true
-    return false
-  }).length
+const siteAnomalies = computed(() => {
+  return props.anomalies.filter(a => a.siteName === props.siteName)
+})
+const anomalyOpenCount = computed(() => {
+  return siteAnomalies.value.filter(a => !isAnomalyClosed(a)).length
+})
+const anomalyClosedCount = computed(() => {
+  return siteAnomalies.value.filter(a => isAnomalyClosed(a)).length
 })
 </script>
 
@@ -233,6 +239,27 @@ const anomalyCount = computed(() => {
 
 .bd-handover-btn:hover {
   background: var(--color-primary);
+  color: #fff;
+}
+
+.bd-anomaly-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.bd-anomaly-btn:hover {
+  background: var(--color-danger);
   color: #fff;
 }
 </style>

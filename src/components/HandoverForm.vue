@@ -76,6 +76,16 @@
               <div class="anomaly-list">
                 <span v-for="(item, idx) in anomalyItems" :key="idx" class="anomaly-tag" :class="item.level">{{ item.text }}</span>
               </div>
+              <div class="anomaly-closed-loop" v-if="anomalyClosedLoopInfo.total > 0">
+                <span class="closed-loop-badge closed" v-if="anomalyClosedLoopInfo.closed > 0">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                  {{ anomalyClosedLoopInfo.closed }} 已闭环
+                </span>
+                <span class="closed-loop-badge open" v-if="anomalyClosedLoopInfo.open > 0">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/></svg>
+                  {{ anomalyClosedLoopInfo.open }} 未闭环
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -149,12 +159,14 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { STATUS_OPTIONS, RISK_OPTIONS } from '../lib/constants.js'
+import { isAnomalyClosed, filterAnomalies } from '../lib/anomalies.js'
 
 const props = defineProps({
   siteName: { type: String, required: true },
   siteBoxes: { type: Array, required: true },
   existingRecord: { type: Object, default: null },
-  alerts: { type: Array, default: () => [] }
+  alerts: { type: Array, default: () => [] },
+  anomalies: { type: Array, default: () => [] }
 })
 
 const emit = defineEmits(['close', 'save'])
@@ -252,6 +264,14 @@ const anomalyItems = computed(() => {
   })
 
   return items
+})
+
+const anomalyClosedLoopInfo = computed(() => {
+  const boxIds = new Set(activeBoxes.value.map(b => b.id).filter(Boolean))
+  const related = props.anomalies.filter(a => boxIds.has(a.boxId))
+  const closed = related.filter(a => isAnomalyClosed(a)).length
+  const open = related.filter(a => !isAnomalyClosed(a)).length
+  return { total: related.length, open, closed }
 })
 
 const handoverData = ref({
@@ -595,6 +615,33 @@ function handleSave() {
 .anomaly-tag.info {
   background: var(--color-info-light);
   color: var(--color-info);
+}
+
+.anomaly-closed-loop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.closed-loop-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 999px;
+}
+
+.closed-loop-badge.closed {
+  color: var(--color-success);
+  background: var(--color-success-light);
+}
+
+.closed-loop-badge.open {
+  color: var(--color-danger);
+  background: var(--color-danger-light);
 }
 
 .detail-section {

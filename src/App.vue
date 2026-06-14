@@ -15,6 +15,14 @@
           </div>
         </div>
         <div class="header-actions">
+          <button class="btn btn-secondary" :class="{ active: anomalyView }" @click="anomalyView ? closeAnomalyList() : openAnomalyList()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+            </svg>
+            {{ anomalyView ? '返回主视图' : '异常处理' }}
+            <span v-if="openAnomalyCount > 0" class="anomaly-count">{{ openAnomalyCount }}</span>
+          </button>
           <button class="btn btn-secondary" :class="{ active: reviewView }" @click="reviewView ? closeReview() : openReviewDashboard()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M3 3v18h18"/>
@@ -39,22 +47,40 @@
     </header>
 
     <RouteProgress
-      v-if="!reviewView"
+      v-if="!reviewView && !anomalyView"
       :boxes="boxes"
+      :anomalies="anomalies"
       :active-site="checkMode ? checkSite : null"
       @select-site="handleSelectSite"
       @handover="openHandoverForm"
+      @create-anomalies="handleCreateAnomaliesForSite"
     />
 
-    <div v-if="reviewView === 'dashboard'" class="main-content">
+    <div v-if="anomalyView" class="main-content">
+      <div class="content-left full">
+        <AnomalyList
+          :anomalies="anomalies"
+          :boxes="boxes"
+          @back="closeAnomalyList"
+          @refresh="loadAnomalies"
+          @update="handleAnomalyUpdate"
+          @locate-box="handleLocateBoxFromAnomaly"
+        />
+      </div>
+    </div>
+
+    <div v-else-if="reviewView === 'dashboard'" class="main-content">
       <div class="content-left full">
         <SiteReviewDashboard
           :boxes="filteredBoxesForReview"
           :all-boxes="boxes"
+          :anomalies="anomalies"
           :handover-records="handoverRecords"
           :applied-filters="filters"
           @back="closeReview"
           @select-site="openReviewDetail"
+          @create-anomalies="handleCreateAnomaliesForSite"
+          @open-anomaly-list="openAnomalyListWithFilter"
         />
       </div>
     </div>
@@ -65,10 +91,13 @@
           :site-name="reviewSiteName"
           :boxes="boxes"
           :filtered-boxes="filteredBoxesForReview"
+          :anomalies="anomalies"
           :handover-records="handoverRecords"
           @back="backToReviewDashboard"
           @handover="openHandoverForm"
           @reopen-handover="handleReopenHandover"
+          @create-anomalies="handleCreateAnomaliesForSite"
+          @open-anomaly-list="openAnomalyListWithFilter"
         />
       </div>
     </div>
@@ -87,13 +116,16 @@
           @copy-last="handleCopyLastSite"
           @toggle-alert="showAlertPanel = !showAlertPanel"
           :alert-count="alerts.length"
+          @create-anomalies="handleCreateAnomaliesForCheckSite"
         />
 
         <SiteCheckHeader
           v-if="checkMode"
           :site-boxes="currentCheckBoxes"
           :site-name="checkSite"
+          :anomalies="anomalies"
           @handover="openHandoverForm"
+          @create-anomalies="handleCreateAnomaliesForCheckSite"
         />
 
         <BoxList
@@ -102,6 +134,7 @@
           :selected-ids="selectedIds"
           :check-mode="checkMode"
           :highlight-ids="highlightIds"
+          :anomalies="anomalies"
           @select="toggleSelect"
           @select-all="toggleSelectAll"
           @update="handleUpdateBox"
@@ -109,22 +142,29 @@
           @edit="openEditForm"
           @reorder="handleReorder"
           @handover="openHandoverForm"
+          @open-anomaly="handleOpenAnomalyForBox"
         />
       </div>
 
       <AlertPanel
         v-if="showAlertPanel"
         :alerts="alerts"
+        :anomalies="anomalies"
         @locate="handleLocateRecord"
+        @create-anomaly="handleCreateAnomalyFromAlert"
+        @open-anomaly-list="openAnomalyListWithFilter"
         @close="showAlertPanel = false"
       />
 
       <HandoverHistory
         v-if="showHandoverHistory"
         :records="handoverRecords"
+        :anomalies="anomalies"
         @reopen="handleReopenHandover"
         @delete="handleDeleteHandover"
         @close="showHandoverHistory = false"
+        @create-anomalies="handleCreateAnomaliesForHandover"
+        @open-anomaly-list="openAnomalyListWithFilter"
       />
     </div>
 
@@ -144,6 +184,7 @@
       :site-boxes="handoverSiteBoxes"
       :existing-record="handoverExistingRecord"
       :alerts="alerts"
+      :anomalies="anomalies"
       @save="handleSaveHandover"
       @close="handoverFormVisible = false"
     />
@@ -156,9 +197,16 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { BoxDB, SiteDB, HandoverDB } from './lib/db.js'
+import { BoxDB, SiteDB, HandoverDB, AnomalyDB } from './lib/db.js'
 import { checkAlerts } from './lib/alerts.js'
 import { seedDemoData } from './lib/seed.js'
+import {
+  createAnomaliesFromAlert,
+  createAnomaliesForSite,
+  createAnomaliesForHandover,
+  getAnomalyStats,
+  isAnomalyClosed
+} from './lib/anomalies.js'
 import RouteProgress from './components/RouteProgress.vue'
 import FilterBar from './components/FilterBar.vue'
 import BoxList from './components/BoxList.vue'
@@ -169,9 +217,12 @@ import HandoverForm from './components/HandoverForm.vue'
 import HandoverHistory from './components/HandoverHistory.vue'
 import SiteReviewDashboard from './components/SiteReviewDashboard.vue'
 import SiteReviewDetail from './components/SiteReviewDetail.vue'
+import AnomalyList from './components/AnomalyList.vue'
+import AnomalyFormModal from './components/AnomalyFormModal.vue'
 
 const loading = ref(false)
 const boxes = ref([])
+const anomalies = ref([])
 const selectedIds = ref(new Set())
 const highlightIds = ref([])
 const showAlertPanel = ref(true)
@@ -180,6 +231,7 @@ const checkSite = ref('')
 const boxListRef = ref(null)
 const reviewView = ref(null)
 const reviewSiteName = ref('')
+const anomalyView = ref(false)
 
 const filters = ref({
   siteName: '',
@@ -199,6 +251,12 @@ const showHandoverHistory = ref(false)
 const handoverRecords = ref([])
 
 const alerts = computed(() => checkAlerts(boxes.value))
+
+const openAnomalyCount = computed(() => {
+  return anomalies.value.filter(a => !isAnomalyClosed(a)).length
+})
+
+const anomalyStats = computed(() => getAnomalyStats(anomalies.value))
 
 const siteList = computed(() => {
   const set = new Set()
@@ -283,6 +341,7 @@ async function loadAll() {
   try {
     boxes.value = await BoxDB.getAll()
     assignSiteOrder()
+    anomalies.value = await AnomalyDB.getAll()
   } finally {
     loading.value = false
   }
@@ -504,7 +563,8 @@ async function loadSeedData() {
   loading.value = true
   try {
     await seedDemoData()
-    await loadAll()
+    await AnomalyDB.clear()
+    await loadAllData()
   } finally {
     loading.value = false
   }
@@ -544,6 +604,109 @@ function toggleHandoverHistory() {
   }
 }
 
+async function loadAnomalies() {
+  anomalies.value = await AnomalyDB.getAll()
+}
+
+function openAnomalyList() {
+  anomalyView.value = true
+  reviewView.value = null
+  checkMode.value = false
+  showAlertPanel.value = false
+  showHandoverHistory.value = false
+}
+
+function closeAnomalyList() {
+  anomalyView.value = false
+}
+
+function openAnomalyListWithFilter(filter) {
+  anomalyView.value = true
+  reviewView.value = null
+  checkMode.value = false
+  showAlertPanel.value = false
+  showHandoverHistory.value = false
+}
+
+function handleAnomalyUpdate(anomaly) {
+  const idx = anomalies.value.findIndex(a => a.id === anomaly.id)
+  if (idx > -1) {
+    anomalies.value[idx] = anomaly
+  } else {
+    anomalies.value.push(anomaly)
+  }
+}
+
+async function handleCreateAnomalyFromAlert(alert) {
+  try {
+    const newAnomalies = await createAnomaliesFromAlert(alert, boxes.value, AnomalyDB)
+    if (newAnomalies.length > 0) {
+      anomalies.value = [...anomalies.value, ...newAnomalies]
+      alert(`已创建 ${newAnomalies.length} 条异常项`)
+    } else {
+      alert('相关异常项已存在，无需重复创建')
+    }
+  } catch (e) {
+    console.error('创建异常项失败:', e)
+    alert('创建异常项失败')
+  }
+}
+
+async function handleCreateAnomaliesForSite(siteName, source = 'review') {
+  try {
+    const newAnomalies = await createAnomaliesForSite(siteName, boxes.value, source, AnomalyDB)
+    if (newAnomalies.length > 0) {
+      anomalies.value = [...anomalies.value, ...newAnomalies]
+      alert(`已为「${siteName}」创建 ${newAnomalies.length} 条异常项`)
+    } else {
+      alert('没有新的异常项需要创建')
+    }
+  } catch (e) {
+    console.error('创建异常项失败:', e)
+    alert('创建异常项失败')
+  }
+}
+
+async function handleCreateAnomaliesForCheckSite() {
+  if (!checkMode.value || !checkSite.value) return
+  await handleCreateAnomaliesForSite(checkSite.value, 'check')
+}
+
+async function handleCreateAnomaliesForHandover(record) {
+  try {
+    const newAnomalies = await createAnomaliesForHandover(record, boxes.value, AnomalyDB)
+    if (newAnomalies.length > 0) {
+      anomalies.value = [...anomalies.value, ...newAnomalies]
+      alert(`已为交接单创建 ${newAnomalies.length} 条异常项`)
+    } else {
+      alert('没有新的异常项需要创建')
+    }
+  } catch (e) {
+    console.error('创建异常项失败:', e)
+    alert('创建异常项失败')
+  }
+}
+
+function handleOpenAnomalyForBox(boxId) {
+  openAnomalyList()
+}
+
+function handleLocateBoxFromAnomaly(boxId) {
+  anomalyView.value = false
+  filters.value = {
+    siteName: '',
+    responsible: '',
+    status: '',
+    riskLevel: ''
+  }
+  checkMode.value = false
+  highlightIds.value = [boxId]
+  nextTick(() => {
+    boxListRef.value?.scrollTo(boxId)
+    setTimeout(() => { highlightIds.value = [] }, 3000)
+  })
+}
+
 function openReviewDashboard() {
   reviewView.value = 'dashboard'
   checkMode.value = false
@@ -570,9 +733,20 @@ async function loadHandoverRecords() {
   handoverRecords.value = await HandoverDB.getAll()
 }
 
+async function loadAllData() {
+  loading.value = true
+  try {
+    boxes.value = await BoxDB.getAll()
+    assignSiteOrder()
+    anomalies.value = await AnomalyDB.getAll()
+    handoverRecords.value = await HandoverDB.getAll()
+  } finally {
+    loading.value = false
+  }
+}
+
 onMounted(async () => {
-  await loadAll()
-  await loadHandoverRecords()
+  await loadAllData()
 })
 </script>
 
@@ -653,6 +827,23 @@ onMounted(async () => {
   font-size: 10px;
   font-weight: 700;
   line-height: 16px;
+}
+
+.anomaly-count {
+  margin-left: 4px;
+  padding: 0 6px;
+  background: var(--color-danger);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  animation: pulse-danger 2s ease-in-out infinite;
+}
+
+@keyframes pulse-danger {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0); }
 }
 
 .main-content {

@@ -141,6 +141,19 @@
           </div>
         </div>
 
+        <div class="card-anomaly-closed" v-if="site.anomalyOpen !== undefined && (site.anomalyOpen > 0 || site.anomalyClosed > 0)">
+          <span v-if="site.anomalyOpen > 0" class="closed-tag open">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/></svg>
+            {{ site.anomalyOpen }} 未闭环
+          </span>
+          <span v-if="site.anomalyClosed > 0" class="closed-tag closed">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            {{ site.anomalyClosed }} 已闭环
+          </span>
+          <button v-if="site.anomalyOpen > 0" class="handle-anomaly-btn" @click.stop="$emit('create-anomalies', site.siteName)">去处理</button>
+          <button class="view-anomaly-btn" @click.stop="$emit('open-anomaly-list', { siteName: site.siteName })">查看异常</button>
+        </div>
+
         <div class="card-handover" v-if="site.latestHandover">
           <div class="handover-label">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -171,25 +184,27 @@
 <script setup>
 import { computed } from 'vue'
 import { STATUS_OPTIONS, RISK_OPTIONS } from '../lib/constants.js'
+import { hasOpenAnomaliesForSite, isAnomalyClosed } from '../lib/anomalies.js'
 
 const props = defineProps({
   boxes: { type: Array, required: true },
   allBoxes: { type: Array, default: () => [] },
   handoverRecords: { type: Array, default: () => [] },
+  anomalies: { type: Array, default: () => [] },
   appliedFilters: {
     type: Object,
     default: () => ({ siteName: '', responsible: '', status: '', riskLevel: '' })
   }
 })
 
-const emit = defineEmits(['back', 'select-site'])
+const emit = defineEmits(['back', 'select-site', 'open-anomaly-list', 'create-anomalies'])
 
 const statusMap = Object.fromEntries(STATUS_OPTIONS.map(s => [s.value, s.label]))
 const riskMap = Object.fromEntries(RISK_OPTIONS.map(r => [r.value, r.label]))
 
 const hasActiveFilters = computed(() => {
   const f = props.appliedFilters || {}
-  return !!(f.siteName || f.responsible || f.status || f.riskLevel)
+  return !!(f.siteName || f.responsible || f.status || f.riskLevel || f.anomalies)
 })
 
 function statusLabel(status) { return statusMap[status] || status }
@@ -260,6 +275,11 @@ const siteSummaries = computed(() => {
       }))
       .sort((a, b) => b._sortTime - a._sortTime)
     s.latestHandover = siteHandovers.length > 0 ? siteHandovers[0] : null
+
+    const siteAnomalies = (props.anomalies || []).filter(a => a.siteName === s.siteName)
+    s.anomalyOpen = siteAnomalies.filter(a => a.status !== 'resolved' && a.status !== 'ignored').length
+    s.anomalyClosed = siteAnomalies.filter(a => a.status === 'resolved' || a.status === 'ignored').length
+    s.anomalyAllClosed = siteAnomalies.length > 0 && s.anomalyOpen === 0
   })
 
   return result
@@ -650,6 +670,62 @@ function handleSelectSite(siteName) {
 .ai-danger { background: var(--color-danger-light); color: var(--color-danger); }
 .ai-warning { background: var(--color-warning-light); color: var(--color-warning); }
 .ai-info { background: var(--color-info-light); color: var(--color-info); }
+
+.card-anomaly-closed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #f3f4f6;
+  flex-wrap: wrap;
+}
+.closed-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.closed-tag.open {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+.closed-tag.closed {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+.handle-anomaly-btn {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--color-primary);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.handle-anomaly-btn:hover {
+  background: #1d4ed8;
+}
+.view-anomaly-btn {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #fff;
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.view-anomaly-btn:hover {
+  background: var(--color-primary-light);
+}
 
 .card-handover {
   padding-top: 10px;

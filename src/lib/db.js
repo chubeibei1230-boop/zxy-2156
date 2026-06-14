@@ -1,8 +1,9 @@
 const DB_NAME = 'ExhibitionMaterialDB'
-const DB_VERSION = 3
+const DB_VERSION = 4
 const STORE_BOXES = 'boxes'
 const STORE_SITES = 'sites'
 const STORE_HANDOVERS = 'handovers'
+const STORE_ANOMALIES = 'anomalies'
 
 let dbInstance = null
 
@@ -59,6 +60,22 @@ function openDB() {
         })
         handoverStore.createIndex('siteName', 'siteName', { unique: false })
         handoverStore.createIndex('createdAt', 'createdAt', { unique: false })
+      }
+
+      if (!db.objectStoreNames.contains(STORE_ANOMALIES)) {
+        const anomalyStore = db.createObjectStore(STORE_ANOMALIES, {
+          keyPath: 'id',
+          autoIncrement: true
+        })
+        anomalyStore.createIndex('siteName', 'siteName', { unique: false })
+        anomalyStore.createIndex('boxId', 'boxId', { unique: false })
+        anomalyStore.createIndex('handoverId', 'handoverId', { unique: false })
+        anomalyStore.createIndex('type', 'type', { unique: false })
+        anomalyStore.createIndex('status', 'status', { unique: false })
+        anomalyStore.createIndex('responsible', 'responsible', { unique: false })
+        anomalyStore.createIndex('handler', 'handler', { unique: false })
+        anomalyStore.createIndex('createdAt', 'createdAt', { unique: false })
+        anomalyStore.createIndex('level', 'level', { unique: false })
       }
     }
   })
@@ -282,6 +299,140 @@ export const HandoverDB = {
     const db = await openDB()
     const tx = db.transaction(STORE_HANDOVERS, 'readwrite')
     const store = tx.objectStore(STORE_HANDOVERS)
+    await promisifyReq(store.clear())
+  }
+}
+
+export const AnomalyDB = {
+  async getAll() {
+    const db = await openDB()
+    const tx = db.transaction(STORE_ANOMALIES, 'readonly')
+    const store = tx.objectStore(STORE_ANOMALIES)
+    return promisifyReq(store.getAll())
+  },
+
+  async getByBoxId(boxId) {
+    const db = await openDB()
+    const tx = db.transaction(STORE_ANOMALIES, 'readonly')
+    const store = tx.objectStore(STORE_ANOMALIES)
+    const index = store.index('boxId')
+    return promisifyReq(index.getAll(boxId))
+  },
+
+  async getBySiteName(siteName) {
+    const db = await openDB()
+    const tx = db.transaction(STORE_ANOMALIES, 'readonly')
+    const store = tx.objectStore(STORE_ANOMALIES)
+    const index = store.index('siteName')
+    return promisifyReq(index.getAll(siteName))
+  },
+
+  async getByHandoverId(handoverId) {
+    const db = await openDB()
+    const tx = db.transaction(STORE_ANOMALIES, 'readonly')
+    const store = tx.objectStore(STORE_ANOMALIES)
+    const index = store.index('handoverId')
+    return promisifyReq(index.getAll(handoverId))
+  },
+
+  async add(anomaly) {
+    const db = await openDB()
+    const tx = db.transaction(STORE_ANOMALIES, 'readwrite')
+    const store = tx.objectStore(STORE_ANOMALIES)
+    const timestamp = Date.now()
+    const data = {
+      ...anomaly,
+      status: anomaly.status || 'pending',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      history: anomaly.history || []
+    }
+    const id = await promisifyReq(store.add(data))
+    return { ...data, id }
+  },
+
+  async bulkAdd(anomalies) {
+    const db = await openDB()
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_ANOMALIES, 'readwrite')
+      const store = tx.objectStore(STORE_ANOMALIES)
+      const timestamp = Date.now()
+      const results = []
+      let completed = 0
+      let hasError = false
+
+      anomalies.forEach((anomaly, index) => {
+        if (hasError) return
+        const data = {
+          ...anomaly,
+          status: anomaly.status || 'pending',
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          history: anomaly.history || []
+        }
+        const req = store.add(data)
+        req.onsuccess = () => {
+          if (hasError) return
+          results.push({ ...data, id: req.result })
+          completed++
+          if (completed === anomalies.length) {
+            resolve(results)
+          }
+        }
+        req.onerror = () => {
+          hasError = true
+          reject(req.error)
+        }
+      })
+
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+  },
+
+  async update(id, updates) {
+    const db = await openDB()
+    const tx = db.transaction(STORE_ANOMALIES, 'readwrite')
+    const store = tx.objectStore(STORE_ANOMALIES)
+    const existing = await promisifyReq(store.get(id))
+    if (!existing) throw new Error('Record not found')
+
+    const historyEntry = {
+      timestamp: Date.now(),
+      oldStatus: existing.status,
+      newStatus: updates.status || existing.status,
+      oldHandler: existing.handler || '',
+      newHandler: updates.handler !== undefined ? updates.handler : existing.handler,
+      oldPlanDate: existing.planDate || '',
+      newPlanDate: updates.planDate !== undefined ? updates.planDate : existing.planDate,
+      oldProcessNote: existing.processNote || '',
+      newProcessNote: updates.processNote !== undefined ? updates.processNote : existing.processNote,
+      oldResult: existing.result || '',
+      newResult: updates.result !== undefined ? updates.result : existing.result,
+      remark: updates.historyRemark || '更新异常信息'
+    }
+
+    const updated = {
+      ...existing,
+      ...updates,
+      updatedAt: Date.now(),
+      history: [...(existing.history || []), historyEntry]
+    }
+    await promisifyReq(store.put(updated))
+    return updated
+  },
+
+  async remove(id) {
+    const db = await openDB()
+    const tx = db.transaction(STORE_ANOMALIES, 'readwrite')
+    const store = tx.objectStore(STORE_ANOMALIES)
+    await promisifyReq(store.delete(id))
+  },
+
+  async clear() {
+    const db = await openDB()
+    const tx = db.transaction(STORE_ANOMALIES, 'readwrite')
+    const store = tx.objectStore(STORE_ANOMALIES)
     await promisifyReq(store.clear())
   }
 }

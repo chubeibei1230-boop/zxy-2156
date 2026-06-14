@@ -86,30 +86,49 @@
               <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
               <line x1="12" y1="9" x2="12" y2="13"/>
             </svg>
-            异常项摘要
-            <span class="panel-badge">{{ anomalyItems.length }}</span>
+            异常闭环处理
+            <span class="panel-badge" :class="{ 'badge-all-closed': siteAnomalyStats.open === 0 && siteAnomalyStats.total > 0 }">
+              {{ siteAnomalyStats.open }} 未闭环 / {{ siteAnomalyStats.closed }} 已闭环
+            </span>
           </div>
-          <span class="panel-hint">点击异常项可快速定位箱体</span>
+          <div class="anomaly-header-actions">
+            <button class="btn btn-xs btn-primary" @click="$emit('create-anomalies', siteName)">创建异常</button>
+            <button class="btn btn-xs btn-secondary" @click="$emit('open-anomaly-list', siteName)">查看全部异常</button>
+          </div>
         </div>
         <div class="anomaly-list">
           <div
             v-for="(item, idx) in anomalyItems"
             :key="idx"
             class="anomaly-item"
-            :class="item.level"
+            :class="[item.level, { 'anomaly-closed': item.closed }]"
             @click="handleLocateBox(item.boxId)"
           >
             <div class="ai-icon">
-              <svg v-if="item.level === 'danger'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/></svg>
+              <svg v-if="item.closed" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <svg v-else-if="item.level === 'danger'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/></svg>
               <svg v-else-if="item.level === 'warning'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
               <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/></svg>
             </div>
             <div class="ai-content">
-              <div class="ai-title">{{ item.title }}</div>
+              <div class="ai-title-row">
+                <span class="ai-type-tag" :class="item.typeClass">{{ item.typeLabel }}</span>
+                <span class="ai-title">{{ item.title }}</span>
+              </div>
               <div class="ai-desc">{{ item.desc }}</div>
+              <div class="ai-meta" v-if="item.handler || item.planDate">
+                <span v-if="item.handler" class="ai-meta-item">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                  {{ item.handler }}
+                </span>
+                <span v-if="item.planDate" class="ai-meta-item">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                  {{ item.planDate }}
+                </span>
+              </div>
             </div>
-            <div class="ai-action">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            <div class="ai-status">
+              <span class="ai-status-tag" :class="item.statusClass">{{ item.statusLabel }}</span>
             </div>
           </div>
         </div>
@@ -229,16 +248,18 @@
 
 <script setup>
 import { ref, computed, nextTick } from 'vue'
-import { STATUS_OPTIONS, RISK_OPTIONS } from '../lib/constants.js'
+import { STATUS_OPTIONS, RISK_OPTIONS, ANOMALY_TYPE_OPTIONS, ANOMALY_STATUS_OPTIONS } from '../lib/constants.js'
+import { isAnomalyClosed, hasOpenAnomaliesForSite, filterAnomalies } from '../lib/anomalies.js'
 
 const props = defineProps({
   siteName: { type: String, required: true },
   boxes: { type: Array, required: true },
   filteredBoxes: { type: Array, default: () => [] },
-  handoverRecords: { type: Array, default: () => [] }
+  handoverRecords: { type: Array, default: () => [] },
+  anomalies: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['back', 'handover', 'reopen-handover'])
+const emit = defineEmits(['back', 'handover', 'reopen-handover', 'create-anomalies', 'open-anomaly-list'])
 
 const boxFilter = ref('all')
 const highlightId = ref(null)
@@ -253,6 +274,8 @@ const statusClassMap = {
   supplement: 'tag-status-supplement'
 }
 const riskClassMap = Object.fromEntries(RISK_OPTIONS.map(r => [r.value, r.class]))
+const anomalyTypeMap = Object.fromEntries(ANOMALY_TYPE_OPTIONS.map(o => [o.value, { label: o.label, cls: o.class }]))
+const anomalyStatusMap = Object.fromEntries(ANOMALY_STATUS_OPTIONS.map(o => [o.value, { label: o.label, cls: o.class }]))
 
 const boxesSource = computed(() => {
   return (props.filteredBoxes && props.filteredBoxes.length > 0) ? props.filteredBoxes : props.boxes
@@ -307,7 +330,42 @@ const siteInfo = computed(() => {
   return info
 })
 
+const siteAnomalies = computed(() => {
+  return filterAnomalies(props.anomalies, { siteName: props.siteName })
+})
+
+const siteAnomalyStats = computed(() => {
+  const items = siteAnomalies.value
+  let open = 0, closed = 0
+  items.forEach(a => {
+    if (isAnomalyClosed(a)) closed++
+    else open++
+  })
+  return { total: items.length, open, closed }
+})
+
 const anomalyItems = computed(() => {
+  if (siteAnomalies.value.length > 0) {
+    return siteAnomalies.value.map(a => {
+      const typeInfo = anomalyTypeMap[a.type] || { label: a.type, cls: 'tag-anomaly-info' }
+      const statusInfo = anomalyStatusMap[a.status] || { label: a.status, cls: '' }
+      const closed = isAnomalyClosed(a)
+      return {
+        level: a.level,
+        title: a.title,
+        desc: a.description || '',
+        boxId: a.boxId,
+        typeLabel: typeInfo.label,
+        typeClass: typeInfo.cls,
+        statusLabel: statusInfo.label,
+        statusClass: statusInfo.cls,
+        handler: a.handler || '',
+        planDate: a.planDate || '',
+        closed
+      }
+    })
+  }
+
   const items = []
 
   const byBoxNumber = new Map()
@@ -324,7 +382,14 @@ const anomalyItems = computed(() => {
           level: 'danger',
           title: '箱号重复',
           desc: `${b.boxNumber} 与其他箱体箱号重复`,
-          boxId: b.id
+          boxId: b.id,
+          typeLabel: '箱号重复',
+          typeClass: 'tag-anomaly-danger',
+          statusLabel: '未闭环',
+          statusClass: 'tag-status-pending',
+          handler: '',
+          planDate: '',
+          closed: false
         })
       })
     }
@@ -336,7 +401,14 @@ const anomalyItems = computed(() => {
         level: 'danger',
         title: '高风险箱',
         desc: `${box.boxNumber || '未填箱号'} - ${box.summary || '未填摘要'}`,
-        boxId: box.id
+        boxId: box.id,
+        typeLabel: '高风险箱',
+        typeClass: 'tag-anomaly-danger',
+        statusLabel: '未闭环',
+        statusClass: 'tag-status-pending',
+        handler: '',
+        planDate: '',
+        closed: false
       })
     }
     if (box.status === 'supplement') {
@@ -344,7 +416,14 @@ const anomalyItems = computed(() => {
         level: 'warning',
         title: '需补充物料',
         desc: `${box.boxNumber || '未填箱号'} - ${box.summary || '未填摘要'}`,
-        boxId: box.id
+        boxId: box.id,
+        typeLabel: '需补充物料',
+        typeClass: 'tag-anomaly-warning',
+        statusLabel: '未闭环',
+        statusClass: 'tag-status-pending',
+        handler: '',
+        planDate: '',
+        closed: false
       })
     }
     if (!box.responsible || !box.responsible.trim()) {
@@ -352,7 +431,14 @@ const anomalyItems = computed(() => {
         level: 'warning',
         title: '责任人未填写',
         desc: `${box.boxNumber || '未填箱号'} - 请填写责任人`,
-        boxId: box.id
+        boxId: box.id,
+        typeLabel: '责任人未填写',
+        typeClass: 'tag-anomaly-warning',
+        statusLabel: '未闭环',
+        statusClass: 'tag-status-pending',
+        handler: '',
+        planDate: '',
+        closed: false
       })
     }
     if (box.status === 'arrived' && (!box.checkNote || !box.checkNote.trim())) {
@@ -360,7 +446,14 @@ const anomalyItems = computed(() => {
         level: 'info',
         title: '已到达缺核对说明',
         desc: `${box.boxNumber || '未填箱号'} - 请补充核对说明`,
-        boxId: box.id
+        boxId: box.id,
+        typeLabel: '缺核对说明',
+        typeClass: 'tag-anomaly-warning',
+        statusLabel: '未闭环',
+        statusClass: 'tag-status-pending',
+        handler: '',
+        planDate: '',
+        closed: false
       })
     }
   })
@@ -691,9 +784,46 @@ async function handleLocateBox(boxId) {
   font-weight: 700;
 }
 
-.panel-hint {
+.panel-badge.badge-all-closed {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.anomaly-header-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.btn-xs {
+  padding: 3px 10px;
   font-size: 11px;
-  color: #9ca3af;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.4;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+}
+
+.btn-secondary {
+  background: #fff;
+  color: var(--color-primary);
+  border-color: #bfdbfe;
+}
+
+.btn-secondary:hover {
+  background: #eff6ff;
 }
 
 .anomaly-list {
@@ -771,17 +901,99 @@ async function handleLocateBox(boxId) {
   white-space: nowrap;
 }
 
-.ai-action {
-  flex-shrink: 0;
-  color: var(--color-primary);
-  opacity: 0;
-  transform: translateX(-4px);
-  transition: all 0.15s;
+.anomaly-item.anomaly-closed {
+  opacity: 0.55;
 }
 
-.anomaly-item:hover .ai-action {
-  opacity: 1;
-  transform: translateX(0);
+.anomaly-item.anomaly-closed .ai-icon {
+  background: #d1d5db;
+}
+
+.ai-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.ai-type-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+
+.tag-anomaly-danger {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.tag-anomaly-warning {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.tag-anomaly-info {
+  background: #f0fdfa;
+  color: #155e75;
+}
+
+.tag-anomaly-ignored {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.ai-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 3px;
+}
+
+.ai-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: #9ca3af;
+}
+
+.ai-status {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.ai-status-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.ai-status-tag.tag-status-pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.ai-status-tag.tag-status-transit {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.ai-status-tag.tag-status-arrived {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.ai-status-tag.tag-anomaly-ignored {
+  background: #f3f4f6;
+  color: #6b7280;
 }
 
 .box-filters {
@@ -1077,9 +1289,16 @@ async function handleLocateBox(boxId) {
     width: 100%;
   }
 
-  .ai-action {
+  .ai-status {
     opacity: 1;
-    transform: none;
+  }
+
+  .ai-title-row {
+    flex-wrap: wrap;
+  }
+
+  .ai-meta {
+    flex-wrap: wrap;
   }
 }
 </style>
