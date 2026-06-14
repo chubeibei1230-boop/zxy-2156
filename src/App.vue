@@ -15,6 +15,13 @@
           </div>
         </div>
         <div class="header-actions">
+          <button class="btn btn-secondary" :class="{ active: reviewView }" @click="reviewView ? closeReview() : openReviewDashboard()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 3v18h18"/>
+              <path d="M7 14l4-4 4 4 5-5"/>
+            </svg>
+            {{ reviewView ? '返回主视图' : '站点复盘看板' }}
+          </button>
           <button class="btn btn-secondary" @click="toggleCheckMode">
             {{ checkMode ? '退出核对模式' : '进入站点核对模式' }}
           </button>
@@ -32,13 +39,38 @@
     </header>
 
     <RouteProgress
+      v-if="!reviewView"
       :boxes="boxes"
       :active-site="checkMode ? checkSite : null"
       @select-site="handleSelectSite"
       @handover="openHandoverForm"
     />
 
-    <div class="main-content" :class="{ 'with-side-panel': showAlertPanel || showHandoverHistory }">
+    <div v-if="reviewView === 'dashboard'" class="main-content">
+      <div class="content-left full">
+        <SiteReviewDashboard
+          :boxes="boxes"
+          :handover-records="handoverRecords"
+          @back="closeReview"
+          @select-site="openReviewDetail"
+        />
+      </div>
+    </div>
+
+    <div v-else-if="reviewView === 'detail'" class="main-content">
+      <div class="content-left full">
+        <SiteReviewDetail
+          :site-name="reviewSiteName"
+          :boxes="boxes"
+          :handover-records="handoverRecords"
+          @back="backToReviewDashboard"
+          @handover="openHandoverForm"
+          @reopen-handover="handleReopenHandover"
+        />
+      </div>
+    </div>
+
+    <div v-else class="main-content" :class="{ 'with-side-panel': showAlertPanel || showHandoverHistory }">
       <div class="content-left" :class="{ full: !showAlertPanel && !showHandoverHistory }">
         <FilterBar
           v-model:filters="filters"
@@ -132,6 +164,8 @@ import BoxFormModal from './components/BoxFormModal.vue'
 import SiteCheckHeader from './components/SiteCheckHeader.vue'
 import HandoverForm from './components/HandoverForm.vue'
 import HandoverHistory from './components/HandoverHistory.vue'
+import SiteReviewDashboard from './components/SiteReviewDashboard.vue'
+import SiteReviewDetail from './components/SiteReviewDetail.vue'
 
 const loading = ref(false)
 const boxes = ref([])
@@ -141,6 +175,8 @@ const showAlertPanel = ref(true)
 const checkMode = ref(false)
 const checkSite = ref('')
 const boxListRef = ref(null)
+const reviewView = ref(null)
+const reviewSiteName = ref('')
 
 const filters = ref({
   siteName: '',
@@ -489,6 +525,28 @@ function toggleHandoverHistory() {
   if (showHandoverHistory.value) {
     showAlertPanel.value = false
   }
+}
+
+function openReviewDashboard() {
+  reviewView.value = 'dashboard'
+  checkMode.value = false
+  showAlertPanel.value = false
+  showHandoverHistory.value = false
+}
+
+function closeReview() {
+  reviewView.value = null
+  reviewSiteName.value = ''
+}
+
+function openReviewDetail(siteName) {
+  reviewSiteName.value = siteName
+  reviewView.value = 'detail'
+}
+
+function backToReviewDashboard() {
+  reviewSiteName.value = ''
+  reviewView.value = 'dashboard'
 }
 
 async function loadHandoverRecords() {
