@@ -108,6 +108,7 @@
       :site-name="handoverSiteName"
       :site-boxes="handoverSiteBoxes"
       :existing-record="handoverExistingRecord"
+      :alerts="alerts"
       @save="handleSaveHandover"
       @close="handoverFormVisible = false"
     />

@@ -7,8 +7,8 @@
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           </div>
           <div>
-            <h3>站点交接单</h3>
-            <p class="header-sub">{{ siteName }} · 共 {{ siteBoxes.length }} 箱</p>
+            <h3>{{ isReopen ? '历史交接单（快照）' : '站点交接单' }}</h3>
+            <p class="header-sub">{{ siteName }} · 共 {{ activeBoxes.length }} 箱</p>
           </div>
         </div>
         <button class="close-btn" @click="$emit('close')">
@@ -17,10 +17,15 @@
       </div>
 
       <div class="modal-body handover-body">
+        <div v-if="isReopen" class="snapshot-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          此为历史快照，内容为交接时的数据状态，重新保存不会更新为当前最新数据
+        </div>
+
         <div class="summary-section">
           <div class="summary-grid">
             <div class="summary-card sc-total">
-              <div class="sc-value">{{ siteBoxes.length }}</div>
+              <div class="sc-value">{{ totalCount }}</div>
               <div class="sc-label">物料箱总数</div>
             </div>
             <div class="summary-card sc-arrived">
@@ -54,9 +59,12 @@
             </div>
             <div class="info-item" v-if="supplementBoxes.length > 0">
               <span class="info-label">待补充物料</span>
-              <span class="info-value supplement-list">
-                <span v-for="b in supplementBoxes" :key="b.id" class="supplement-tag">{{ b.boxNumber || '未填' }}</span>
-              </span>
+              <div class="info-value supplement-list">
+                <span v-for="b in supplementBoxes" :key="b.id || b.boxNumber" class="supplement-tag">
+                  <span class="sup-boxno">{{ b.boxNumber || '未填' }}</span>
+                  <span v-if="b.summary" class="sup-detail">{{ b.summary }}</span>
+                </span>
+              </div>
             </div>
           </div>
           <div class="info-row" v-if="anomalyItems.length > 0">
@@ -89,7 +97,7 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="box in siteBoxes" :key="box.id" :class="{ 'row-risk': box.riskLevel === 'high', 'row-supplement': box.status === 'supplement' }">
+                <tr v-for="box in activeBoxes" :key="box.id || box.boxNumber" :class="{ 'row-risk': box.riskLevel === 'high', 'row-supplement': box.status === 'supplement' }">
                   <td class="td-boxno"><span class="boxno-code">{{ box.boxNumber || '—' }}</span></td>
                   <td class="td-summary">{{ box.summary || '—' }}</td>
                   <td class="td-time">{{ box.timeSlot || '—' }}</td>
@@ -145,7 +153,8 @@ import { STATUS_OPTIONS, RISK_OPTIONS } from '../lib/constants.js'
 const props = defineProps({
   siteName: { type: String, required: true },
   siteBoxes: { type: Array, required: true },
-  existingRecord: { type: Object, default: null }
+  existingRecord: { type: Object, default: null },
+  alerts: { type: Array, default: () => [] }
 })
 
 const emit = defineEmits(['close', 'save'])
@@ -160,17 +169,27 @@ const statusClassMap = {
   supplement: 'tag-status-supplement'
 }
 
-const arrivedCount = computed(() => props.siteBoxes.filter(b => b.status === 'arrived').length)
-const transitCount = computed(() => props.siteBoxes.filter(b => b.status === 'transit').length)
-const pendingCount = computed(() => props.siteBoxes.filter(b => b.status === 'pending').length)
-const supplementCount = computed(() => props.siteBoxes.filter(b => b.status === 'supplement').length)
-const highRiskCount = computed(() => props.siteBoxes.filter(b => b.riskLevel === 'high').length)
+const isReopen = computed(() => !!props.existingRecord)
 
-const supplementBoxes = computed(() => props.siteBoxes.filter(b => b.status === 'supplement'))
+const activeBoxes = computed(() => {
+  if (props.existingRecord?.boxes?.length) {
+    return props.existingRecord.boxes
+  }
+  return props.siteBoxes
+})
+
+const totalCount = computed(() => activeBoxes.value.length)
+const arrivedCount = computed(() => activeBoxes.value.filter(b => b.status === 'arrived').length)
+const transitCount = computed(() => activeBoxes.value.filter(b => b.status === 'transit').length)
+const pendingCount = computed(() => activeBoxes.value.filter(b => b.status === 'pending').length)
+const supplementCount = computed(() => activeBoxes.value.filter(b => b.status === 'supplement').length)
+const highRiskCount = computed(() => activeBoxes.value.filter(b => b.riskLevel === 'high').length)
+
+const supplementBoxes = computed(() => activeBoxes.value.filter(b => b.status === 'supplement'))
 
 const responsibleDistribution = computed(() => {
   const map = new Map()
-  props.siteBoxes.forEach(b => {
+  activeBoxes.value.forEach(b => {
     const name = b.responsible || '未分配'
     map.set(name, (map.get(name) || 0) + 1)
   })
@@ -179,12 +198,59 @@ const responsibleDistribution = computed(() => {
 
 const anomalyItems = computed(() => {
   const items = []
-  props.siteBoxes.forEach(b => {
+  const boxes = activeBoxes.value
+
+  const byBoxNumber = new Map()
+  boxes.forEach(b => {
+    const key = (b.boxNumber || '').trim().toUpperCase()
+    if (!key) return
+    if (!byBoxNumber.has(key)) byBoxNumber.set(key, [])
+    byBoxNumber.get(key).push(b)
+  })
+  byBoxNumber.forEach((group) => {
+    if (group.length > 1) {
+      items.push({ level: 'danger', text: `箱号重复：${group[0].boxNumber} 出现 ${group.length} 次` })
+    }
+  })
+
+  const ordered = boxes
+    .filter(b => typeof b.orderIndex === 'number' && b.orderIndex > 0)
+    .sort((a, b) => a.orderIndex - b.orderIndex)
+  if (ordered.length > 1) {
+    const gaps = []
+    for (let i = 1; i < ordered.length; i++) {
+      if (ordered[i].orderIndex - ordered[i - 1].orderIndex > 1) {
+        for (let g = ordered[i - 1].orderIndex + 1; g < ordered[i].orderIndex; g++) {
+          gaps.push(g)
+        }
+      }
+    }
+    if (gaps.length > 0) {
+      const gapStr = gaps.length <= 3
+        ? gaps.join('、')
+        : `${gaps.slice(0, 3).join('、')} 等 ${gaps.length} 个`
+      items.push({ level: 'info', text: `站点顺序断档：缺号 ${gapStr}` })
+    }
+  }
+
+  boxes.forEach(b => {
     if (b.riskLevel === 'high') items.push({ level: 'danger', text: `${b.boxNumber || '未填'} 高风险` })
     if (b.status === 'supplement') items.push({ level: 'warning', text: `${b.boxNumber || '未填'} 需补充` })
     if (!b.responsible || !b.responsible.trim()) items.push({ level: 'warning', text: `${b.boxNumber || '未填'} 无责任人` })
     if (b.status === 'arrived' && (!b.checkNote || !b.checkNote.trim())) items.push({ level: 'info', text: `${b.boxNumber || '未填'} 缺核对说明` })
   })
+
+  const siteAlerts = props.alerts.filter(a => {
+    if (!a.recordIds || a.recordIds.length === 0) return false
+    return a.recordIds.some(rid => boxes.some(b => b.id === rid))
+  })
+  siteAlerts.forEach(a => {
+    const alreadyAdded = items.some(i => i.text.includes(a.message))
+    if (!alreadyAdded) {
+      items.push({ level: a.level, text: a.message })
+    }
+  })
+
   return items
 })
 
@@ -223,9 +289,22 @@ function statusClass(status) {
 }
 
 function handleSave() {
+  if (isReopen.value && props.existingRecord) {
+    const rec = props.existingRecord
+    const record = {
+      ...rec,
+      handoverPerson: handoverData.value.handoverPerson.trim(),
+      receiverPerson: handoverData.value.receiverPerson.trim(),
+      handoverTime: handoverData.value.handoverTime,
+      siteNote: handoverData.value.siteNote.trim()
+    }
+    emit('save', record)
+    return
+  }
+
   const record = {
     siteName: props.siteName,
-    totalBoxes: props.siteBoxes.length,
+    totalBoxes: totalCount.value,
     arrivedCount: arrivedCount.value,
     transitCount: transitCount.value,
     pendingCount: pendingCount.value,
@@ -234,7 +313,7 @@ function handleSave() {
     responsibleDistribution: responsibleDistribution.value,
     supplementBoxes: supplementBoxes.value.map(b => ({ boxNumber: b.boxNumber, summary: b.summary })),
     anomalyItems: anomalyItems.value,
-    boxes: props.siteBoxes.map(b => ({
+    boxes: activeBoxes.value.map(b => ({
       id: b.id,
       boxNumber: b.boxNumber,
       summary: b.summary,
@@ -243,15 +322,13 @@ function handleSave() {
       status: b.status,
       responsible: b.responsible,
       checkNote: b.checkNote,
-      remark: b.remark
+      remark: b.remark,
+      orderIndex: b.orderIndex
     })),
     handoverPerson: handoverData.value.handoverPerson.trim(),
     receiverPerson: handoverData.value.receiverPerson.trim(),
     handoverTime: handoverData.value.handoverTime,
     siteNote: handoverData.value.siteNote.trim()
-  }
-  if (props.existingRecord?.id) {
-    record.id = props.existingRecord.id
   }
   emit('save', record)
 }
@@ -354,6 +431,19 @@ function handleSave() {
   color: #fff;
 }
 
+.snapshot-banner {
+  padding: 10px 16px;
+  background: linear-gradient(90deg, #fef3c7, #fde68a);
+  color: #92400e;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #fcd34d;
+}
+
 .handover-body {
   flex: 1;
   overflow-y: auto;
@@ -443,16 +533,33 @@ function handleSave() {
 .supplement-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 6px;
 }
 
 .supplement-tag {
-  padding: 2px 9px;
+  display: inline-flex;
+  flex-direction: column;
+  padding: 5px 10px;
   background: var(--color-warning-light);
   color: var(--color-warning);
-  border-radius: 999px;
+  border-radius: 6px;
   font-size: 11px;
   font-weight: 600;
+  gap: 2px;
+}
+
+.sup-boxno {
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+}
+
+.sup-detail {
+  font-weight: 400;
+  color: #78350f;
+  font-size: 10px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .anomaly-item {
