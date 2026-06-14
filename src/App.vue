@@ -18,6 +18,11 @@
           <button class="btn btn-secondary" @click="toggleCheckMode">
             {{ checkMode ? '退出核对模式' : '进入站点核对模式' }}
           </button>
+          <button class="btn btn-secondary" @click="toggleHandoverHistory" :class="{ active: showHandoverHistory }">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            交接记录
+            <span v-if="handoverRecords.length > 0" class="handover-count">{{ handoverRecords.length }}</span>
+          </button>
           <button class="btn btn-secondary" @click="loadSeedData" title="加载演示数据">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
             演示数据
@@ -30,10 +35,11 @@
       :boxes="boxes"
       :active-site="checkMode ? checkSite : null"
       @select-site="handleSelectSite"
+      @handover="openHandoverForm"
     />
 
-    <div class="main-content">
-      <div class="content-left" :class="{ full: !showAlertPanel }">
+    <div class="main-content" :class="{ 'with-side-panel': showAlertPanel || showHandoverHistory }">
+      <div class="content-left" :class="{ full: !showAlertPanel && !showHandoverHistory }">
         <FilterBar
           v-model:filters="filters"
           :boxes="boxes"
@@ -52,6 +58,7 @@
           v-if="checkMode"
           :site-boxes="currentCheckBoxes"
           :site-name="checkSite"
+          @handover="openHandoverForm"
         />
 
         <BoxList
@@ -66,6 +73,7 @@
           @remove="handleRemoveBox"
           @edit="openEditForm"
           @reorder="handleReorder"
+          @handover="openHandoverForm"
         />
       </div>
 
@@ -74,6 +82,14 @@
         :alerts="alerts"
         @locate="handleLocateRecord"
         @close="showAlertPanel = false"
+      />
+
+      <HandoverHistory
+        v-if="showHandoverHistory"
+        :records="handoverRecords"
+        @reopen="handleReopenHandover"
+        @delete="handleDeleteHandover"
+        @close="showHandoverHistory = false"
       />
     </div>
 
@@ -87,6 +103,15 @@
       @close="formVisible = false"
     />
 
+    <HandoverForm
+      v-if="handoverFormVisible"
+      :site-name="handoverSiteName"
+      :site-boxes="handoverSiteBoxes"
+      :existing-record="handoverExistingRecord"
+      @save="handleSaveHandover"
+      @close="handoverFormVisible = false"
+    />
+
     <div v-if="loading" class="loading-mask">
       <div class="loading-spinner"></div>
     </div>
@@ -95,7 +120,7 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { BoxDB, SiteDB } from './lib/db.js'
+import { BoxDB, SiteDB, HandoverDB } from './lib/db.js'
 import { checkAlerts } from './lib/alerts.js'
 import { seedDemoData } from './lib/seed.js'
 import RouteProgress from './components/RouteProgress.vue'
@@ -104,6 +129,8 @@ import BoxList from './components/BoxList.vue'
 import AlertPanel from './components/AlertPanel.vue'
 import BoxFormModal from './components/BoxFormModal.vue'
 import SiteCheckHeader from './components/SiteCheckHeader.vue'
+import HandoverForm from './components/HandoverForm.vue'
+import HandoverHistory from './components/HandoverHistory.vue'
 
 const loading = ref(false)
 const boxes = ref([])
@@ -124,6 +151,12 @@ const filters = ref({
 const formVisible = ref(false)
 const formMode = ref('add')
 const formData = ref(null)
+
+const handoverFormVisible = ref(false)
+const handoverSiteName = ref('')
+const handoverExistingRecord = ref(null)
+const showHandoverHistory = ref(false)
+const handoverRecords = ref([])
 
 const alerts = computed(() => checkAlerts(boxes.value))
 
@@ -166,6 +199,11 @@ const displayedBoxes = computed(() => {
 const currentCheckBoxes = computed(() => {
   if (!checkMode.value || !checkSite.value) return []
   return boxes.value.filter(b => b.siteName === checkSite.value)
+})
+
+const handoverSiteBoxes = computed(() => {
+  if (!handoverSiteName.value) return []
+  return boxes.value.filter(b => b.siteName === handoverSiteName.value)
 })
 
 function assignSiteOrder() {
@@ -418,8 +456,47 @@ async function loadSeedData() {
   }
 }
 
+function openHandoverForm(siteName) {
+  handoverSiteName.value = siteName
+  handoverExistingRecord.value = null
+  handoverFormVisible.value = true
+}
+
+async function handleSaveHandover(record) {
+  if (record.id) {
+    await HandoverDB.update(record.id, record)
+  } else {
+    await HandoverDB.add(record)
+  }
+  handoverFormVisible.value = false
+  await loadHandoverRecords()
+}
+
+async function handleReopenHandover(record) {
+  handoverSiteName.value = record.siteName
+  handoverExistingRecord.value = record
+  handoverFormVisible.value = true
+}
+
+async function handleDeleteHandover(id) {
+  await HandoverDB.remove(id)
+  handoverRecords.value = handoverRecords.value.filter(r => r.id !== id)
+}
+
+function toggleHandoverHistory() {
+  showHandoverHistory.value = !showHandoverHistory.value
+  if (showHandoverHistory.value) {
+    showAlertPanel.value = false
+  }
+}
+
+async function loadHandoverRecords() {
+  handoverRecords.value = await HandoverDB.getAll()
+}
+
 onMounted(async () => {
   await loadAll()
+  await loadHandoverRecords()
 })
 </script>
 
@@ -485,15 +562,36 @@ onMounted(async () => {
   gap: 10px;
 }
 
+.header-actions .btn.active {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  border-color: #bfdbfe;
+}
+
+.handover-count {
+  margin-left: 4px;
+  padding: 0 6px;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+}
+
 .main-content {
   max-width: 1600px;
   width: 100%;
   margin: 0 auto;
   padding: 20px 24px 40px;
   display: grid;
-  grid-template-columns: 1fr 340px;
   gap: 20px;
   flex: 1;
+  grid-template-columns: 1fr;
+}
+
+.main-content.with-side-panel {
+  grid-template-columns: 1fr 340px;
 }
 
 .content-left {

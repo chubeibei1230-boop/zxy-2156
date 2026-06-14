@@ -33,6 +33,10 @@
               </span>
               <span class="meta-status">{{ getLabel(site) }}</span>
             </div>
+            <button class="site-handover-btn" @click.stop="$emit('handover', site.name)" title="生成交接单">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              交接
+            </button>
           </div>
           <div v-if="idx < siteStats.length - 1" class="connector">
             <div class="connector-fill" :class="{ done: getStatus(site) === 'done' && (getStatus(siteStats[idx + 1]) === 'done') }"></div>
@@ -51,7 +55,7 @@ const props = defineProps({
   activeSite: { type: String, default: null }
 })
 
-defineEmits(['select-site'])
+defineEmits(['select-site', 'handover'])
 
 const siteStats = computed(() => {
   const map = new Map()
@@ -257,6 +261,28 @@ function isActive(siteName) {
 .site-node.done .meta-status { color: var(--color-success); }
 .site-node.partial .meta-status { color: var(--color-primary); }
 .site-node.active .meta-status { color: var(--color-warning); }
+
+.site-handover-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-top: 4px;
+  white-space: nowrap;
+}
+
+.site-handover-btn:hover {
+  background: var(--color-primary);
+  color: #fff;
+}
 
 .connector {
   position: absolute;

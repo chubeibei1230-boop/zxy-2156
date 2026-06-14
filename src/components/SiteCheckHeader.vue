@@ -54,6 +54,10 @@
       <span class="bd-tag transit" v-if="transitCount > 0">在途 {{ transitCount }}</span>
       <span class="bd-tag arrived" v-if="arrivedCount > 0">已到达 {{ arrivedCount }}</span>
       <span class="bd-tag supplement" v-if="supplementCount > 0">需补充 {{ supplementCount }}</span>
+      <button class="bd-handover-btn" @click="$emit('handover', siteName)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        生成交接单
+      </button>
     </div>
   </div>
 </template>
@@ -65,6 +69,8 @@ const props = defineProps({
   siteBoxes: { type: Array, required: true },
   siteName: { type: String, required: true }
 })
+
+const emit = defineEmits(['handover'])
 
 const arrivedCount = computed(() => props.siteBoxes.filter(b => b.status === 'arrived').length)
 const transitCount = computed(() => props.siteBoxes.filter(b => b.status === 'transit').length)
@@ -207,4 +213,26 @@ const anomalyCount = computed(() => {
 .bd-tag.transit { background: var(--color-info-light); color: var(--color-info); }
 .bd-tag.arrived { background: var(--color-success-light); color: var(--color-success); }
 .bd-tag.supplement { background: var(--color-warning-light); color: var(--color-warning); }
+
+.bd-handover-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.bd-handover-btn:hover {
+  background: var(--color-primary);
+  color: #fff;
+}
 </style>

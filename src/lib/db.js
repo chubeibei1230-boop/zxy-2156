@@ -1,7 +1,8 @@
 const DB_NAME = 'ExhibitionMaterialDB'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const STORE_BOXES = 'boxes'
 const STORE_SITES = 'sites'
+const STORE_HANDOVERS = 'handovers'
 
 let dbInstance = null
 
@@ -49,6 +50,15 @@ function openDB() {
         })
         siteStore.createIndex('orderIndex', 'orderIndex', { unique: false })
         siteStore.createIndex('name', 'name', { unique: true })
+      }
+
+      if (!db.objectStoreNames.contains(STORE_HANDOVERS)) {
+        const handoverStore = db.createObjectStore(STORE_HANDOVERS, {
+          keyPath: 'id',
+          autoIncrement: true
+        })
+        handoverStore.createIndex('siteName', 'siteName', { unique: false })
+        handoverStore.createIndex('createdAt', 'createdAt', { unique: false })
       }
     }
   })
@@ -228,6 +238,50 @@ export const SiteDB = {
     const db = await openDB()
     const tx = db.transaction(STORE_SITES, 'readwrite')
     const store = tx.objectStore(STORE_SITES)
+    await promisifyReq(store.clear())
+  }
+}
+
+export const HandoverDB = {
+  async getAll() {
+    const db = await openDB()
+    const tx = db.transaction(STORE_HANDOVERS, 'readonly')
+    const store = tx.objectStore(STORE_HANDOVERS)
+    return promisifyReq(store.getAll())
+  },
+
+  async add(record) {
+    const db = await openDB()
+    const tx = db.transaction(STORE_HANDOVERS, 'readwrite')
+    const store = tx.objectStore(STORE_HANDOVERS)
+    const timestamp = Date.now()
+    const data = { ...record, createdAt: timestamp, updatedAt: timestamp }
+    const id = await promisifyReq(store.add(data))
+    return { ...data, id }
+  },
+
+  async update(id, updates) {
+    const db = await openDB()
+    const tx = db.transaction(STORE_HANDOVERS, 'readwrite')
+    const store = tx.objectStore(STORE_HANDOVERS)
+    const existing = await promisifyReq(store.get(id))
+    if (!existing) throw new Error('Record not found')
+    const updated = { ...existing, ...updates, updatedAt: Date.now() }
+    await promisifyReq(store.put(updated))
+    return updated
+  },
+
+  async remove(id) {
+    const db = await openDB()
+    const tx = db.transaction(STORE_HANDOVERS, 'readwrite')
+    const store = tx.objectStore(STORE_HANDOVERS)
+    await promisifyReq(store.delete(id))
+  },
+
+  async clear() {
+    const db = await openDB()
+    const tx = db.transaction(STORE_HANDOVERS, 'readwrite')
+    const store = tx.objectStore(STORE_HANDOVERS)
     await promisifyReq(store.clear())
   }
 }

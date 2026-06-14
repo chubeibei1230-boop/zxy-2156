@@ -27,6 +27,10 @@
             </div>
             <div class="site-group-status">
               <span v-for="s in group.statLabels" :key="s.label" class="mini-stat" :class="s.class">{{ s.label }} {{ s.count }}</span>
+              <button class="handover-btn" title="生成交接单" @click.stop="$emit('handover', group.siteName)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                交接
+              </button>
             </div>
           </div>
 
@@ -143,7 +147,7 @@ const props = defineProps({
   highlightIds: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['select', 'select-all', 'update', 'remove', 'edit', 'reorder'])
+const emit = defineEmits(['select', 'select-all', 'update', 'remove', 'edit', 'reorder', 'handover'])
 
 const statusOptions = STATUS_OPTIONS
 const editingField = ref(null)
@@ -482,6 +486,27 @@ defineExpose({ scrollTo })
 .mini-stat.m-transit { background: var(--color-info-light); color: var(--color-info); }
 .mini-stat.m-arrived { background: var(--color-success-light); color: var(--color-success); }
 .mini-stat.m-supplement { background: var(--color-warning-light); color: var(--color-warning); }
+
+.handover-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.handover-btn:hover {
+  background: var(--color-primary);
+  color: #fff;
+}
 
 .box-table-wrap {
   overflow-x: auto;
