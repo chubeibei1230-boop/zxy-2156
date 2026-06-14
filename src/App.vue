@@ -49,8 +49,10 @@
     <div v-if="reviewView === 'dashboard'" class="main-content">
       <div class="content-left full">
         <SiteReviewDashboard
-          :boxes="boxes"
+          :boxes="filteredBoxesForReview"
+          :all-boxes="boxes"
           :handover-records="handoverRecords"
+          :applied-filters="filters"
           @back="closeReview"
           @select-site="openReviewDetail"
         />
@@ -62,6 +64,7 @@
         <SiteReviewDetail
           :site-name="reviewSiteName"
           :boxes="boxes"
+          :filtered-boxes="filteredBoxesForReview"
           :handover-records="handoverRecords"
           @back="backToReviewDashboard"
           @handover="openHandoverForm"
@@ -230,6 +233,20 @@ const displayedBoxes = computed(() => {
     return (a.orderIndex || 0) - (b.orderIndex || 0)
   })
 
+  return list
+})
+
+const filteredBoxesForReview = computed(() => {
+  let list = [...boxes.value]
+  if (filters.value.siteName) list = list.filter(b => b.siteName === filters.value.siteName)
+  if (filters.value.responsible) list = list.filter(b => b.responsible === filters.value.responsible)
+  if (filters.value.status) list = list.filter(b => b.status === filters.value.status)
+  if (filters.value.riskLevel) list = list.filter(b => b.riskLevel === filters.value.riskLevel)
+  list.sort((a, b) => {
+    const sOrder = (a.siteOrder ?? 0) - (b.siteOrder ?? 0)
+    if (sOrder !== 0) return sOrder
+    return (a.orderIndex || 0) - (b.orderIndex || 0)
+  })
   return list
 })
 

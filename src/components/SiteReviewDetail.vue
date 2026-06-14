@@ -40,13 +40,31 @@
           <div class="sc-label">已到达</div>
         </div>
       </div>
-      <div class="stat-card sc-transit">
+      <div class="stat-card sc-pending">
         <div class="sc-icon">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         </div>
         <div class="sc-info">
-          <div class="sc-value">{{ siteInfo.transit + siteInfo.pending + siteInfo.supplement }}</div>
-          <div class="sc-label">待发/在途/需补</div>
+          <div class="sc-value">{{ siteInfo.pending }}</div>
+          <div class="sc-label">待发出</div>
+        </div>
+      </div>
+      <div class="stat-card sc-transit">
+        <div class="sc-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+        </div>
+        <div class="sc-info">
+          <div class="sc-value">{{ siteInfo.transit }}</div>
+          <div class="sc-label">在途</div>
+        </div>
+      </div>
+      <div class="stat-card sc-supplement" v-if="siteInfo.supplement > 0">
+        <div class="sc-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        </div>
+        <div class="sc-info">
+          <div class="sc-value">{{ siteInfo.supplement }}</div>
+          <div class="sc-label">需补充</div>
         </div>
       </div>
       <div class="stat-card sc-risk" v-if="siteInfo.highRisk > 0">
@@ -120,7 +138,7 @@
 
         <div class="box-list" ref="boxListRef">
           <div
-            v-for="box in filteredBoxes"
+            v-for="box in filteredBoxesForList"
             :key="box.id"
             class="box-item"
             :class="{ highlight: highlightId === box.id, abnormal: isBoxAbnormal(box) }"
@@ -152,7 +170,7 @@
             </div>
           </div>
 
-          <div v-if="filteredBoxes.length === 0" class="box-empty">
+          <div v-if="filteredBoxesForList.length === 0" class="box-empty">
             暂无符合条件的箱体
           </div>
         </div>
@@ -183,8 +201,8 @@
             @click="$emit('reopen-handover', record)"
           >
             <div class="hi-top">
-              <span class="hi-time">{{ formatTime(record.createdAt) }}</span>
-              <span class="hi-count">{{ record.totalBoxes }} 箱</span>
+              <span class="hi-time">{{ formatTime(record._sortTime || record.createdAt) }}</span>
+              <span class="hi-count">{{ record._liveTotal ?? record.totalBoxes }} 箱</span>
             </div>
             <div class="hi-people" v-if="record.handoverPerson || record.receiverPerson">
               <span class="person from">{{ record.handoverPerson || '—' }}</span>
@@ -192,10 +210,12 @@
               <span class="person to">{{ record.receiverPerson || '—' }}</span>
             </div>
             <div class="hi-stats">
-              <span class="hi-stat arrived" v-if="record.arrivedCount > 0">{{ record.arrivedCount }} 已到</span>
-              <span class="hi-stat transit" v-if="record.transitCount > 0">{{ record.transitCount }} 在途</span>
-              <span class="hi-stat pending" v-if="record.pendingCount > 0">{{ record.pendingCount }} 待发</span>
-              <span class="hi-stat risk" v-if="record.highRiskCount > 0">{{ record.highRiskCount }} 高风险</span>
+              <span class="hi-stat arrived" v-if="(record._liveArrived ?? record.arrivedCount) > 0">{{ record._liveArrived ?? record.arrivedCount }} 已到</span>
+              <span class="hi-stat transit" v-if="(record._liveTransit ?? record.transitCount) > 0">{{ record._liveTransit ?? record.transitCount }} 在途</span>
+              <span class="hi-stat pending" v-if="(record._livePending ?? record.pendingCount) > 0">{{ record._livePending ?? record.pendingCount }} 待发</span>
+              <span class="hi-stat supplement" v-if="(record._liveSupplement ?? 0) > 0">{{ record._liveSupplement }} 需补</span>
+              <span class="hi-stat risk" v-if="(record._liveHighRisk ?? record.highRiskCount) > 0">{{ record._liveHighRisk ?? record.highRiskCount }} 高风险</span>
+              <span class="hi-stat-changed" v-if="record._statsChanged" title="箱体状态已更新，数据以最新实时状态为准">已更新</span>
             </div>
             <div class="hi-note" v-if="record.siteNote">
               {{ record.siteNote }}
@@ -214,6 +234,7 @@ import { STATUS_OPTIONS, RISK_OPTIONS } from '../lib/constants.js'
 const props = defineProps({
   siteName: { type: String, required: true },
   boxes: { type: Array, required: true },
+  filteredBoxes: { type: Array, default: () => [] },
   handoverRecords: { type: Array, default: () => [] }
 })
 
@@ -233,8 +254,18 @@ const statusClassMap = {
 }
 const riskClassMap = Object.fromEntries(RISK_OPTIONS.map(r => [r.value, r.class]))
 
+const boxesSource = computed(() => {
+  return (props.filteredBoxes && props.filteredBoxes.length > 0) ? props.filteredBoxes : props.boxes
+})
+
+const allBoxesById = computed(() => {
+  const m = new Map()
+  props.boxes.forEach(b => m.set(b.id, b))
+  return m
+})
+
 const siteBoxes = computed(() => {
-  return props.boxes
+  return boxesSource.value
     .filter(b => b.siteName === props.siteName)
     .sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0))
 })
@@ -337,7 +368,7 @@ const anomalyItems = computed(() => {
   return items
 })
 
-const filteredBoxes = computed(() => {
+const filteredBoxesForList = computed(() => {
   if (boxFilter.value === 'abnormal') {
     return siteBoxes.value.filter(box => isBoxAbnormal(box))
   }
@@ -345,9 +376,58 @@ const filteredBoxes = computed(() => {
 })
 
 const siteHandovers = computed(() => {
-  return props.handoverRecords
+  const baseRecords = props.handoverRecords
     .filter(r => r.siteName === props.siteName)
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+
+  return baseRecords
+    .map(r => {
+      let sortTime = r.createdAt || 0
+      if (r.handoverTime) {
+        if (r.handoverTime.getTime) sortTime = r.handoverTime.getTime()
+        else if (typeof r.handoverTime === 'number') sortTime = r.handoverTime
+      }
+
+      const boxIds = Array.isArray(r.boxIds) ? r.boxIds : []
+      let liveArrived = 0, liveTransit = 0, livePending = 0, liveSupplement = 0, liveHighRisk = 0
+      let liveCount = 0
+      boxIds.forEach(id => {
+        const box = allBoxesById.value.get(id)
+        if (box) {
+          liveCount += 1
+          if (box.status === 'arrived') liveArrived += 1
+          else if (box.status === 'transit') liveTransit += 1
+          else if (box.status === 'supplement') liveSupplement += 1
+          else livePending += 1
+          if (box.riskLevel === 'high') liveHighRisk += 1
+        }
+      })
+
+      const hasBoxIds = boxIds.length > 0
+      const snapshotArrived = r.arrivedCount || 0
+      const snapshotTransit = r.transitCount || 0
+      const snapshotPending = r.pendingCount || 0
+      const snapshotRisk = r.highRiskCount || 0
+      const statsChanged = hasBoxIds && (
+        liveArrived !== snapshotArrived ||
+        liveTransit !== snapshotTransit ||
+        livePending !== snapshotPending ||
+        liveHighRisk !== snapshotRisk ||
+        liveSupplement > 0
+      )
+
+      return {
+        ...r,
+        _sortTime: sortTime,
+        _liveTotal: hasBoxIds ? liveCount : null,
+        _liveArrived: hasBoxIds ? liveArrived : null,
+        _liveTransit: hasBoxIds ? liveTransit : null,
+        _livePending: hasBoxIds ? livePending : null,
+        _liveSupplement: hasBoxIds ? liveSupplement : null,
+        _liveHighRisk: hasBoxIds ? liveHighRisk : null,
+        _statsChanged: statsChanged
+      }
+    })
+    .sort((a, b) => b._sortTime - a._sortTime)
 })
 
 function isDuplicate(box) {
@@ -508,7 +588,9 @@ async function handleLocateBox(boxId) {
 
 .sc-total .sc-icon { background: #eff6ff; color: #2563eb; }
 .sc-arrived .sc-icon { background: var(--color-success-light); color: var(--color-success); }
+.sc-pending .sc-icon { background: #f3f4f6; color: #4b5563; }
 .sc-transit .sc-icon { background: var(--color-info-light); color: var(--color-info); }
+.sc-supplement .sc-icon { background: var(--color-warning-light); color: var(--color-warning); }
 .sc-risk .sc-icon { background: var(--color-danger-light); color: var(--color-danger); }
 
 .sc-value {
@@ -519,7 +601,9 @@ async function handleLocateBox(boxId) {
 }
 
 .sc-arrived .sc-value { color: var(--color-success); }
+.sc-pending .sc-value { color: #4b5563; }
 .sc-transit .sc-value { color: var(--color-info); }
+.sc-supplement .sc-value { color: var(--color-warning); }
 .sc-risk .sc-value { color: var(--color-danger); }
 
 .sc-label {
@@ -930,7 +1014,20 @@ async function handleLocateBox(boxId) {
 .hi-stat.arrived { color: var(--color-success); }
 .hi-stat.transit { color: var(--color-info); }
 .hi-stat.pending { color: #6b7280; }
+.hi-stat.supplement { color: var(--color-warning); }
 .hi-stat.risk { color: var(--color-danger); }
+
+.hi-stat-changed {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  letter-spacing: 0.2px;
+}
 
 .hi-note {
   font-size: 11px;

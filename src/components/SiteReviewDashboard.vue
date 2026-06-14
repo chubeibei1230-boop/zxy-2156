@@ -30,6 +30,24 @@
       </div>
     </div>
 
+    <div v-if="hasActiveFilters" class="filter-scope">
+      <div class="scope-label">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+        </svg>
+        当前筛选范围
+      </div>
+      <div class="scope-tags">
+        <span v-if="appliedFilters.siteName" class="scope-tag">站点：{{ appliedFilters.siteName }}</span>
+        <span v-if="appliedFilters.responsible" class="scope-tag">责任人：{{ appliedFilters.responsible }}</span>
+        <span v-if="appliedFilters.status" class="scope-tag">状态：{{ statusLabel(appliedFilters.status) }}</span>
+        <span v-if="appliedFilters.riskLevel" class="scope-tag">风险：{{ riskLabel(appliedFilters.riskLevel) }}</span>
+      </div>
+      <div class="scope-hint">
+        ( {{ totalStats.total }} 箱 / 覆盖 {{ siteSummaries.length }} 个站点，仅基于筛选后的数据统计 )
+      </div>
+    </div>
+
     <div v-if="siteSummaries.length === 0" class="empty-state">
       <div class="empty-icon">
         <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -92,7 +110,14 @@
           </span>
         </div>
 
-        <div class="card-alerts" v-if="site.highRisk > 0 || site.missingResponsible > 0 || site.missingCheckNote > 0">
+        <div class="card-alerts" v-if="site.highRisk > 0 || site.missingResponsible > 0 || site.missingCheckNote > 0 || site.duplicateCount > 0">
+          <div v-if="site.duplicateCount > 0" class="alert-item ai-danger">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 20h9"/>
+              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+            </svg>
+            箱号重复 {{ site.duplicateCount }}
+          </div>
           <div v-if="site.highRisk > 0" class="alert-item ai-danger">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10"/>
@@ -125,7 +150,7 @@
             最近交接
           </div>
           <div class="handover-content">
-            <span class="handover-time">{{ formatTime(site.latestHandover.createdAt) }}</span>
+            <span class="handover-time">{{ formatTime(site.latestHandover._sortTime || site.latestHandover.createdAt) }}</span>
             <span class="handover-people" v-if="site.latestHandover.handoverPerson || site.latestHandover.receiverPerson">
               {{ site.latestHandover.handoverPerson || '—' }} → {{ site.latestHandover.receiverPerson || '—' }}
             </span>
@@ -145,13 +170,30 @@
 
 <script setup>
 import { computed } from 'vue'
+import { STATUS_OPTIONS, RISK_OPTIONS } from '../lib/constants.js'
 
 const props = defineProps({
   boxes: { type: Array, required: true },
-  handoverRecords: { type: Array, default: () => [] }
+  allBoxes: { type: Array, default: () => [] },
+  handoverRecords: { type: Array, default: () => [] },
+  appliedFilters: {
+    type: Object,
+    default: () => ({ siteName: '', responsible: '', status: '', riskLevel: '' })
+  }
 })
 
 const emit = defineEmits(['back', 'select-site'])
+
+const statusMap = Object.fromEntries(STATUS_OPTIONS.map(s => [s.value, s.label]))
+const riskMap = Object.fromEntries(RISK_OPTIONS.map(r => [r.value, r.label]))
+
+const hasActiveFilters = computed(() => {
+  const f = props.appliedFilters || {}
+  return !!(f.siteName || f.responsible || f.status || f.riskLevel)
+})
+
+function statusLabel(status) { return statusMap[status] || status }
+function riskLabel(level) { return riskMap[level] || level }
 
 const siteSummaries = computed(() => {
   const map = new Map()
@@ -171,6 +213,8 @@ const siteSummaries = computed(() => {
         highRisk: 0,
         missingResponsible: 0,
         missingCheckNote: 0,
+        duplicateCount: 0,
+        _boxNumbers: new Map(),
         orderIndex: box.orderIndex || 9999
       })
     }
@@ -185,6 +229,18 @@ const siteSummaries = computed(() => {
     if (!box.responsible || !box.responsible.trim()) s.missingResponsible += 1
     if (box.status === 'arrived' && (!box.checkNote || !box.checkNote.trim())) s.missingCheckNote += 1
     if (s.orderIndex > (box.orderIndex || 9999)) s.orderIndex = box.orderIndex || 9999
+
+    const key = (box.boxNumber || '').trim().toUpperCase()
+    if (key) {
+      s._boxNumbers.set(key, (s._boxNumbers.get(key) || 0) + 1)
+    }
+  })
+
+  map.forEach(s => {
+    let dup = 0
+    s._boxNumbers.forEach(cnt => { if (cnt > 1) dup += cnt })
+    s.duplicateCount = dup
+    delete s._boxNumbers
   })
 
   const result = [...map.values()].sort((a, b) => {
@@ -194,11 +250,15 @@ const siteSummaries = computed(() => {
 
   result.forEach(s => {
     s.arrivedRate = s.total === 0 ? 0 : Math.round((s.arrived / s.total) * 100)
-    s.anomalyCount = s.highRisk + s.missingResponsible + s.missingCheckNote + s.supplement
+    s.anomalyCount = s.highRisk + s.missingResponsible + s.missingCheckNote + s.supplement + s.duplicateCount
 
     const siteHandovers = props.handoverRecords
       .filter(r => r.siteName === s.siteName)
-      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      .map(r => ({
+        ...r,
+        _sortTime: (r.handoverTime && r.handoverTime.getTime ? r.handoverTime.getTime() : (typeof r.handoverTime === 'number' ? r.handoverTime : null)) || r.createdAt || 0
+      }))
+      .sort((a, b) => b._sortTime - a._sortTime)
     s.latestHandover = siteHandovers.length > 0 ? siteHandovers[0] : null
   })
 
@@ -285,6 +345,58 @@ function handleSelectSite(siteName) {
   font-size: 12px;
   color: #9ca3af;
   margin-top: 2px;
+}
+
+.filter-scope {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: linear-gradient(90deg, #fff7ed, #fef2f2);
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-md);
+}
+
+.scope-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #92400e;
+  flex-shrink: 0;
+}
+
+.scope-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.scope-tag {
+  background: #fff;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #78350f;
+  border: 1px solid #fde68a;
+}
+
+.scope-hint {
+  font-size: 11px;
+  color: #a16207;
+  font-weight: 500;
+}
+
+@media (max-width: 640px) {
+  .filter-scope {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
 }
 
 .dashboard-summary {
