@@ -419,7 +419,18 @@ export async function createAnomaliesForHandover(handoverRecord, boxes, AnomalyD
   })
 
   const existingAnomalies = await AnomalyDB.getAll()
-  const newAnomalies = deduplicateAnomalies(anomalies, existingAnomalies)
+  const existingKeys = new Set()
+  existingAnomalies.forEach(a => {
+    if (!isAnomalyClosed(a) && a.handoverId === handoverRecord.id) {
+      const key = `${a.type}-${a.boxId}-${a.handoverId}`
+      existingKeys.add(key)
+    }
+  })
+
+  const newAnomalies = anomalies.filter(a => {
+    const key = `${a.type}-${a.boxId}-${a.handoverId}`
+    return !existingKeys.has(key)
+  })
 
   if (newAnomalies.length > 0) {
     return AnomalyDB.bulkAdd(newAnomalies)

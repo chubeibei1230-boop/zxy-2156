@@ -61,6 +61,7 @@
         <AnomalyList
           :anomalies="anomalies"
           :boxes="boxes"
+          :initial-filter="anomalyListFilter"
           @back="closeAnomalyList"
           @refresh="loadAnomalies"
           @update="handleAnomalyUpdate"
@@ -232,6 +233,7 @@ const boxListRef = ref(null)
 const reviewView = ref(null)
 const reviewSiteName = ref('')
 const anomalyView = ref(false)
+const anomalyListFilter = ref({})
 
 const filters = ref({
   siteName: '',
@@ -609,6 +611,7 @@ async function loadAnomalies() {
 }
 
 function openAnomalyList() {
+  anomalyListFilter.value = {}
   anomalyView.value = true
   reviewView.value = null
   checkMode.value = false
@@ -618,9 +621,11 @@ function openAnomalyList() {
 
 function closeAnomalyList() {
   anomalyView.value = false
+  anomalyListFilter.value = {}
 }
 
 function openAnomalyListWithFilter(filter) {
+  anomalyListFilter.value = filter || {}
   anomalyView.value = true
   reviewView.value = null
   checkMode.value = false
@@ -637,18 +642,18 @@ function handleAnomalyUpdate(anomaly) {
   }
 }
 
-async function handleCreateAnomalyFromAlert(alert) {
+async function handleCreateAnomalyFromAlert(alertItem) {
   try {
-    const newAnomalies = await createAnomaliesFromAlert(alert, boxes.value, AnomalyDB)
+    const newAnomalies = await createAnomaliesFromAlert(alertItem, boxes.value, AnomalyDB)
     if (newAnomalies.length > 0) {
       anomalies.value = [...anomalies.value, ...newAnomalies]
-      alert(`已创建 ${newAnomalies.length} 条异常项`)
+      window.alert(`已创建 ${newAnomalies.length} 条异常项`)
     } else {
-      alert('相关异常项已存在，无需重复创建')
+      window.alert('相关异常项已存在，无需重复创建')
     }
   } catch (e) {
     console.error('创建异常项失败:', e)
-    alert('创建异常项失败')
+    window.alert('创建异常项失败')
   }
 }
 
@@ -657,13 +662,13 @@ async function handleCreateAnomaliesForSite(siteName, source = 'review') {
     const newAnomalies = await createAnomaliesForSite(siteName, boxes.value, source, AnomalyDB)
     if (newAnomalies.length > 0) {
       anomalies.value = [...anomalies.value, ...newAnomalies]
-      alert(`已为「${siteName}」创建 ${newAnomalies.length} 条异常项`)
+      window.alert(`已为「${siteName}」创建 ${newAnomalies.length} 条异常项`)
     } else {
-      alert('没有新的异常项需要创建')
+      window.alert('没有新的异常项需要创建')
     }
   } catch (e) {
     console.error('创建异常项失败:', e)
-    alert('创建异常项失败')
+    window.alert('创建异常项失败')
   }
 }
 
@@ -677,18 +682,18 @@ async function handleCreateAnomaliesForHandover(record) {
     const newAnomalies = await createAnomaliesForHandover(record, boxes.value, AnomalyDB)
     if (newAnomalies.length > 0) {
       anomalies.value = [...anomalies.value, ...newAnomalies]
-      alert(`已为交接单创建 ${newAnomalies.length} 条异常项`)
+      window.alert(`已为交接单创建 ${newAnomalies.length} 条异常项`)
     } else {
-      alert('没有新的异常项需要创建')
+      window.alert('没有新的异常项需要创建')
     }
   } catch (e) {
     console.error('创建异常项失败:', e)
-    alert('创建异常项失败')
+    window.alert('创建异常项失败')
   }
 }
 
 function handleOpenAnomalyForBox(boxId) {
-  openAnomalyList()
+  openAnomalyListWithFilter({ boxId })
 }
 
 function handleLocateBoxFromAnomaly(boxId) {

@@ -227,7 +227,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
   ANOMALY_TYPE_OPTIONS,
   ANOMALY_STATUS_OPTIONS,
@@ -239,7 +239,8 @@ import AnomalyFormModal from './AnomalyFormModal.vue'
 
 const props = defineProps({
   anomalies: { type: Array, required: true },
-  boxes: { type: Array, default: () => [] }
+  boxes: { type: Array, default: () => [] },
+  initialFilter: { type: Object, default: () => ({}) }
 })
 
 const emit = defineEmits(['back', 'refresh', 'update', 'locate-box'])
@@ -251,8 +252,20 @@ const filters = ref({
   type: '',
   status: '',
   source: '',
-  level: ''
+  level: '',
+  boxId: '',
+  handoverId: ''
 })
+
+watch(() => props.initialFilter, (newFilter) => {
+  if (newFilter && Object.keys(newFilter).length > 0) {
+    Object.keys(newFilter).forEach(key => {
+      if (key in filters.value) {
+        filters.value[key] = newFilter[key]
+      }
+    })
+  }
+}, { immediate: true, deep: true })
 
 const formVisible = ref(false)
 const formMode = ref('edit')
